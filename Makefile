@@ -5,7 +5,7 @@ LDLIBS  += $(shell pkg-config --libs sdl2) -lm
 # tray icon support (GTK3 + dlopen'd libayatana-appindicator)
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 ifneq ($(GTK_CFLAGS),)
-CFLAGS += -DUSE_TRAY $(GTK_CFLAGS)
+CFLAGS += -DUSE_TRAY -DICON_DIR='"$(CURDIR)/icons"' $(GTK_CFLAGS)
 LDLIBS += $(shell pkg-config --libs gtk+-3.0) -ldl
 endif
 

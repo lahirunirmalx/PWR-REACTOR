@@ -28,9 +28,10 @@ switches, a scrolling charge-trend scope and an analog bus-load meter.
   dim histogram of total bus load along the bottom.
 - **Analog bus-load meter**: damped needle, auto-ranging scale and a
   red peak-hold marker.
-- **Tray resident**: closing the window hides it to a tray icon
-  (StatusNotifier via `libayatana-appindicator`, loaded with `dlopen`
-  so no dev package is required). Menu: Show Panel / Quit.
+- **Tray resident**: closing the window hides it to a tray icon - a
+  green radiation trefoil (StatusNotifier via `libayatana-appindicator`,
+  loaded with `dlopen` so no dev package is required). Menu:
+  Show Panel / Quit.
 - **Pops up on plug-in**: when a new device battery appears, the panel
   raises itself automatically.
 - **systemd user service** included, so it starts with your session.

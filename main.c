@@ -1274,9 +1274,15 @@ static void on_signal(int sig)
 #ifdef USE_TRAY
 
 typedef void *(*ai_new_fn)(const char *, const char *, int);
+typedef void *(*ai_new_path_fn)(const char *, const char *, int,
+                                const char *);
 typedef void (*ai_set_status_fn)(void *, int);
 typedef void (*ai_set_menu_fn)(void *, GtkMenu *);
 typedef void (*ai_set_title_fn)(void *, const char *);
+
+#ifndef ICON_DIR
+#define ICON_DIR "."
+#endif
 
 static int g_tray_ok = 0;
 static ai_set_title_fn g_ai_set_title;
@@ -1300,9 +1306,11 @@ static int tray_init(void)
 {
     void *h;
     ai_new_fn ai_new;
+    ai_new_path_fn ai_new_path;
     ai_set_status_fn ai_set_status;
     ai_set_menu_fn ai_set_menu;
     GtkWidget *menu, *item;
+    FILE *icon;
 
     if (!gtk_init_check(NULL, NULL))
         return 0;
@@ -1312,6 +1320,7 @@ static int tray_init(void)
     if (!h)
         return 0;
     ai_new = (ai_new_fn)dlsym(h, "app_indicator_new");
+    ai_new_path = (ai_new_path_fn)dlsym(h, "app_indicator_new_with_path");
     ai_set_status = (ai_set_status_fn)dlsym(h, "app_indicator_set_status");
     ai_set_menu = (ai_set_menu_fn)dlsym(h, "app_indicator_set_menu");
     g_ai_set_title = (ai_set_title_fn)dlsym(h, "app_indicator_set_title");
@@ -1329,8 +1338,19 @@ static int tray_init(void)
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     gtk_widget_show_all(menu);
 
-    /* APP_INDICATOR_CATEGORY_HARDWARE = 3, STATUS_ACTIVE = 1 */
-    g_indicator = ai_new("power-reactor", "battery-good-symbolic", 3);
+    /* APP_INDICATOR_CATEGORY_HARDWARE = 3, STATUS_ACTIVE = 1.
+     * Prefer the bundled reactor trefoil; fall back to the stock
+     * battery icon when the file or entry point is unavailable. */
+    g_indicator = NULL;
+    icon = fopen(ICON_DIR "/power-reactor.svg", "r");
+    if (icon) {
+        fclose(icon);
+        if (ai_new_path)
+            g_indicator = ai_new_path("power-reactor", "power-reactor",
+                                      3, ICON_DIR);
+    }
+    if (!g_indicator)
+        g_indicator = ai_new("power-reactor", "battery-good-symbolic", 3);
     if (!g_indicator)
         return 0;
     ai_set_status(g_indicator, 1);
