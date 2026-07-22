@@ -69,10 +69,27 @@ make uninstall-service
 The service starts the panel hidden in the tray at login; it pops up
 whenever a device with a battery is plugged in.
 
-## Notes
+## Supported devices
 
-- iPhone charge level comes from `upower` (via `usbmuxd`); the kernel's
-  `apple_mfi_fastcharge` driver alone does not expose it. Pair/trust
-  the phone once for telemetry to appear.
-- Devices that expose no charge data show dashed digits and a
-  `NO TELEMETRY` tag.
+Anything that reports battery state through a standard Linux interface
+shows up automatically:
+
+- **USB HID power devices**: wireless mouse/keyboard receivers,
+  gamepads (DualShock/DualSense, Xbox via xpadneo), styluses - the
+  kernel exposes them in `/sys/class/power_supply` and upower picks
+  them up.
+- **Logitech Unifying / HID++** receivers (via upower).
+- **Bluetooth devices** advertising the GATT battery service: phones,
+  earbuds, headsets, mice, keyboards (via BlueZ + upower).
+- **iPhones over USB**: charge level comes from `upower` + `usbmuxd`;
+  the kernel's `apple_mfi_fastcharge` driver alone does not expose it.
+  Pair/trust the phone once for telemetry to appear.
+- **Android over USB**: no standard kernel interface exists, so the
+  scanner falls back to `adb shell dumpsys battery`. Install
+  `platform-tools` (adb) and enable USB debugging on the phone; it then
+  appears with an `ANDROID` tag like any other device. Bluetooth-paired
+  Androids work without adb.
+- **UPS units** speaking the USB HID power-device class (via upower).
+
+Devices that expose no charge data show dashed digits and a
+`NO TELEMETRY` tag.

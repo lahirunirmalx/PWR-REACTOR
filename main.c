@@ -496,6 +496,110 @@ static void scan_sysfs(void)
     qsort(g_devs, (size_t)g_ndevs, sizeof(Dev), dev_cmp);
 }
 
+/* ---------------- Android via adb ---------------------------------- */
+
+/* serials are embedded in a shell command - allow a safe charset only */
+static int serial_ok(const char *s)
+{
+    if (!*s)
+        return 0;
+    for (; *s; s++)
+        if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+              (*s >= '0' && *s <= '9') || *s == '.' || *s == ':' ||
+              *s == '-' || *s == '_'))
+            return 0;
+    return 1;
+}
+
+static void scan_adb(void)
+{
+    FILE *p;
+    char line[256];
+    char serial[8][64];
+    char model[8][28];
+    int n = 0, i;
+
+    p = popen("timeout 2 adb devices -l 2>/dev/null", "r");
+    if (!p)
+        return;
+    while (fgets(line, sizeof line, p) && n < 8) {
+        char *tok, *state, *m;
+        line[strcspn(line, "\n")] = 0;
+        if (strstr(line, "List of devices"))
+            continue;
+        tok = strtok(line, " \t");
+        if (!tok)
+            continue;
+        state = strtok(NULL, " \t");
+        if (!state || strcmp(state, "device"))
+            continue;
+        snprintf(serial[n], sizeof serial[0], "%.63s", tok);
+        model[n][0] = 0;
+        while ((m = strtok(NULL, " \t")))
+            if (!strncmp(m, "model:", 6))
+                snprintf(model[n], sizeof model[0], "%.27s", m + 6);
+        n++;
+    }
+    pclose(p);
+
+    for (i = 0; i < n && g_ndevs < MAX_DEVS; i++) {
+        Dev *dv;
+        char cmd[160];
+        int level = -1, status = -1;
+        long volt_mv = -1;
+
+        if (!serial_ok(serial[i]))
+            continue;
+        snprintf(cmd, sizeof cmd,
+                 "timeout 2 adb -s %.63s shell dumpsys battery 2>/dev/null",
+                 serial[i]);
+        p = popen(cmd, "r");
+        if (!p)
+            continue;
+        while (fgets(line, sizeof line, p)) {
+            char *s = line;
+            while (*s == ' ')
+                s++;
+            if (!strncmp(s, "level:", 6))
+                level = atoi(s + 6);
+            else if (!strncmp(s, "status:", 7))
+                status = atoi(s + 7);
+            else if (!strncmp(s, "voltage:", 8))
+                volt_mv = atol(s + 8);
+        }
+        pclose(p);
+        if (level < 0)
+            continue;
+
+        dv = &g_devs[g_ndevs++];
+        memset(dv, 0, sizeof *dv);
+        dv->kind = KIND_DEVBAT;
+        strcpy(dv->tag, "ANDROID");
+        dv->capacity = level > 100 ? 100 : level;
+        dv->online = -1;
+        dv->voltage_uv = volt_mv > 0 ? volt_mv * 1000 : -1;
+        dv->power_uw = -1;
+        switch (status) { /* android BatteryManager constants */
+        case 2:  strcpy(dv->status, "CHG"); break;
+        case 3:  strcpy(dv->status, "DIS"); break;
+        case 4:  strcpy(dv->status, "IDL"); break;
+        case 5:  strcpy(dv->status, "FUL"); break;
+        default: strcpy(dv->status, "---"); break;
+        }
+        if (model[i][0]) {
+            char *c;
+            snprintf(dv->label, sizeof dv->label, "%.27s", model[i]);
+            for (c = dv->label; *c; c++)
+                if (*c == '_')
+                    *c = ' ';
+        } else {
+            snprintf(dv->label, sizeof dv->label, "ADB %.20s", serial[i]);
+        }
+        str_upper(dv->label);
+        dv->label[24] = 0;
+    }
+}
+
 /* returns 1 when a new device battery appeared since the last scan */
 static int scan_devices(void)
 {
@@ -507,6 +611,8 @@ static int scan_devices(void)
     g_upower_link = scan_upower() > 0;
     if (!g_upower_link)
         scan_sysfs();
+    scan_adb();
+    qsort(g_devs, (size_t)g_ndevs, sizeof(Dev), dev_cmp);
 
     /* new-plug detection over device batteries */
     for (i = 0; i < g_ndevs; i++) {
