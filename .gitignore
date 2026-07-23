@@ -1,2 +1,4 @@
 power_reactor
+power_reactor_asan
 *.o
+build/

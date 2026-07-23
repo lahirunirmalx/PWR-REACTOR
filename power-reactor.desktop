@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PWR-REACTOR
+GenericName=Battery Telemetry Panel
+Comment=Retro CRT/VFD battery monitor for all connected devices
+Exec=@BIN@
+Icon=power-reactor
+Terminal=false
+Categories=Utility;System;Monitor;
+Keywords=battery;power;ups;monitor;
+StartupWMClass=power_reactor

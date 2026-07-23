@@ -15,18 +15,26 @@
  *
  * Flags:  --hidden   start minimized to tray (used by the service)
  *         --amber    start with amber phosphor
+ *         --widget   borderless always-on-top mini panel (drag by header)
+ *
+ * Config: ~/.config/power-reactor.conf (created with defaults on first
+ * run): scan interval, alert thresholds, popup/notify/sound switches,
+ * phosphor, tray label, widget mode and position.
  *
  * Keys :  H hold scan, L lamp test, P phosphor, ESC hide, Q quit
  */
 
 #include <SDL.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifdef USE_TRAY
 #include <dlfcn.h>
@@ -45,7 +53,6 @@
 #define BOT_Y  (SCREEN_Y + SCREEN_H - 54)
 
 #define MAX_DEVS 16
-#define SCAN_INTERVAL_MS 2000
 
 #define HIST_N 180 /* samples kept per device, one per scan (~6 min) */
 
@@ -88,6 +95,138 @@ static void theme_apply(void)
     g_theme.metal3  = (SDL_Color){24, 26, 24, 255};
     g_theme.screen  = (SDL_Color){7, 13, 9, 255};
     g_theme.lampoff = (SDL_Color){40, 34, 30, 255};
+}
+
+/* ------------------------------------------------------------------ */
+/* config - ~/.config/power-reactor.conf, created with defaults on     */
+/* first run. key=value lines, # comments.                             */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    int scan_ms;
+    int warn_pct;
+    int crit_pct;
+    int popup_on_plug;
+    int notify;
+    int sound;
+    int amber;
+    int tray_label;
+    int widget;
+    int widget_x; /* -1 = auto top-right */
+    int widget_y;
+} Config;
+
+static Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 0, -1, -1};
+
+/* range-checked strtol for every number that comes from an external
+ * process, a device or the config file. atoi overflow is UB. */
+static long parse_long(const char *s, long lo, long hi, long def)
+{
+    char *end;
+    long v;
+    errno = 0;
+    v = strtol(s, &end, 10);
+    if (end == s || errno == ERANGE)
+        return def;
+    if (v < lo)
+        return lo;
+    if (v > hi)
+        return hi;
+    return v;
+}
+
+static void config_path(char *out, size_t n)
+{
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    if (xdg && xdg[0])
+        snprintf(out, n, "%s/power-reactor.conf", xdg);
+    else
+        snprintf(out, n, "%s/.config/power-reactor.conf",
+                 getenv("HOME") ? getenv("HOME") : ".");
+}
+
+static void config_write_default(const char *path)
+{
+    /* O_EXCL: never follow or clobber something that appeared between
+     * the failed read and this write */
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    FILE *f = fd >= 0 ? fdopen(fd, "w") : NULL;
+    if (!f) {
+        if (fd >= 0)
+            close(fd);
+        return;
+    }
+    fprintf(f,
+        "# PWR-REACTOR configuration\n"
+        "# telemetry rescan interval in milliseconds\n"
+        "scan_ms=2000\n"
+        "# notification thresholds (percent)\n"
+        "warn_pct=15\n"
+        "crit_pct=5\n"
+        "# raise the panel when a new device battery is plugged in\n"
+        "popup_on_plug=1\n"
+        "# desktop notifications on low battery\n"
+        "notify=1\n"
+        "# alert sound (freedesktop sound theme via paplay)\n"
+        "sound=1\n"
+        "# start with amber phosphor instead of green\n"
+        "amber=0\n"
+        "# show lowest device percentage next to the tray icon\n"
+        "tray_label=1\n"
+        "# widget mode: borderless always-on-top mini panel\n"
+        "widget=0\n"
+        "# widget position, -1 = auto top-right corner\n"
+        "widget_x=-1\n"
+        "widget_y=-1\n");
+    fclose(f);
+}
+
+static void config_load(void)
+{
+    char path[512], line[128];
+    FILE *f;
+    config_path(path, sizeof path);
+    f = fopen(path, "r");
+    if (!f) {
+        config_write_default(path);
+        return;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char *eq, *key = line, *val;
+        line[strcspn(line, "\n")] = 0;
+        if (line[0] == '#' || !line[0])
+            continue;
+        eq = strchr(line, '=');
+        if (!eq)
+            continue;
+        *eq = 0;
+        val = eq + 1;
+        if (!strcmp(key, "scan_ms"))
+            g_cfg.scan_ms = (int)parse_long(val, 500, 600000, 2000);
+        else if (!strcmp(key, "warn_pct"))
+            g_cfg.warn_pct = (int)parse_long(val, 0, 100, 15);
+        else if (!strcmp(key, "crit_pct"))
+            g_cfg.crit_pct = (int)parse_long(val, 0, 100, 5);
+        else if (!strcmp(key, "popup_on_plug"))
+            g_cfg.popup_on_plug = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "notify"))
+            g_cfg.notify = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "sound"))
+            g_cfg.sound = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "amber"))
+            g_cfg.amber = (int)parse_long(val, 0, 1, 0);
+        else if (!strcmp(key, "tray_label"))
+            g_cfg.tray_label = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "widget"))
+            g_cfg.widget = (int)parse_long(val, 0, 1, 0);
+        else if (!strcmp(key, "widget_x"))
+            g_cfg.widget_x = (int)parse_long(val, -1, 32767, -1);
+        else if (!strcmp(key, "widget_y"))
+            g_cfg.widget_y = (int)parse_long(val, -1, 32767, -1);
+    }
+    fclose(f);
+    if (g_cfg.crit_pct > g_cfg.warn_pct)
+        g_cfg.crit_pct = g_cfg.warn_pct;
 }
 
 /* trace palette for the trend scope */
@@ -187,6 +326,8 @@ typedef struct {
     int  online;
     long voltage_uv;
     long power_uw;
+    int  est_min;   /* minutes to empty/full, -1 unknown */
+    int  est_ttf;   /* 1 = time to full, 0 = time to empty */
 } Dev;
 
 static Dev g_devs[MAX_DEVS];
@@ -256,8 +397,26 @@ typedef struct {
     int  psupply;
     double volt;
     double rate_w;
+    int  tte_min;
+    int  ttf_min;
     int  active;
 } UBlock;
+
+/* "3.5 hours" / "42.0 minutes" -> minutes, clamped to a sane range */
+static int parse_duration_min(const char *v)
+{
+    double d = atof(v);
+    int m = -1;
+    if (d < 0 || d > 1e6)
+        return -1;
+    if (strstr(v, "hour"))
+        m = (int)(d * 60);
+    else if (strstr(v, "minute"))
+        m = (int)d;
+    else if (strstr(v, "second"))
+        m = (int)(d / 60);
+    return m > 100000 ? 100000 : m;
+}
 
 static void ublock_reset(UBlock *u)
 {
@@ -267,6 +426,8 @@ static void ublock_reset(UBlock *u)
     u->psupply = -1;
     u->volt = -1;
     u->rate_w = -1;
+    u->tte_min = -1;
+    u->ttf_min = -1;
 }
 
 static void ublock_flush(const UBlock *u)
@@ -283,8 +444,18 @@ static void ublock_flush(const UBlock *u)
     memset(dv, 0, sizeof *dv);
     dv->capacity = u->percent;
     dv->online = u->online;
-    dv->voltage_uv = u->volt >= 0 ? (long)(u->volt * 1e6) : -1;
-    dv->power_uw = u->rate_w >= 0 ? (long)(u->rate_w * 1e6) : -1;
+    dv->voltage_uv = (u->volt >= 0 && u->volt < 1000)
+                   ? (long)(u->volt * 1e6) : -1;
+    dv->power_uw = (u->rate_w >= 0 && u->rate_w < 10000)
+                 ? (long)(u->rate_w * 1e6) : -1;
+    dv->est_min = -1;
+    if (u->tte_min > 0) {
+        dv->est_min = u->tte_min;
+        dv->est_ttf = 0;
+    } else if (u->ttf_min > 0) {
+        dv->est_min = u->ttf_min;
+        dv->est_ttf = 1;
+    }
     strcpy(dv->status, "---");
 
     if (!strcmp(u->category, "line-power")) {
@@ -377,7 +548,7 @@ static int scan_upower(void)
             else if (!strcmp(key, "native-path") && !u.path[0])
                 snprintf(u.path, sizeof u.path, "%.127s", val);
             else if (!strcmp(key, "percentage"))
-                u.percent = atoi(val);
+                u.percent = (int)parse_long(val, -1, 100, -1);
             else if (!strcmp(key, "state"))
                 snprintf(u.state, sizeof u.state, "%.23s", val);
             else if (!strcmp(key, "icon-name"))
@@ -390,6 +561,10 @@ static int scan_upower(void)
                 u.online = !strncmp(val, "yes", 3);
             else if (!strcmp(key, "power supply"))
                 u.psupply = !strncmp(val, "yes", 3);
+            else if (!strcmp(key, "time to empty"))
+                u.tte_min = parse_duration_min(val);
+            else if (!strcmp(key, "time to full"))
+                u.ttf_min = parse_duration_min(val);
         }
     }
     ublock_flush(&u);
@@ -444,6 +619,7 @@ static void scan_sysfs(void)
         dv->online = -1;
         dv->voltage_uv = -1;
         dv->power_uw = -1;
+        dv->est_min = -1;
         strcpy(dv->status, "---");
 
         if (read_sysfs_str(e->d_name, "type", buf, sizeof buf) != 0)
@@ -495,6 +671,8 @@ static void scan_sysfs(void)
     closedir(d);
     qsort(g_devs, (size_t)g_ndevs, sizeof(Dev), dev_cmp);
 }
+
+static Dev *dev_append(int kind, const char *tag, const char *label);
 
 /* ---------------- Android via adb ---------------------------------- */
 
@@ -561,42 +739,430 @@ static void scan_adb(void)
             while (*s == ' ')
                 s++;
             if (!strncmp(s, "level:", 6))
-                level = atoi(s + 6);
+                level = (int)parse_long(s + 6, -1, 100, -1);
             else if (!strncmp(s, "status:", 7))
-                status = atoi(s + 7);
+                status = (int)parse_long(s + 7, -1, 10, -1);
             else if (!strncmp(s, "voltage:", 8))
-                volt_mv = atol(s + 8);
+                volt_mv = parse_long(s + 8, -1, 1000000, -1);
         }
         pclose(p);
         if (level < 0)
             continue;
 
-        dv = &g_devs[g_ndevs++];
-        memset(dv, 0, sizeof *dv);
-        dv->kind = KIND_DEVBAT;
-        strcpy(dv->tag, "ANDROID");
+        {
+            char name[28];
+            if (model[i][0]) {
+                char *c;
+                snprintf(name, sizeof name, "%.27s", model[i]);
+                for (c = name; *c; c++)
+                    if (*c == '_')
+                        *c = ' ';
+            } else {
+                snprintf(name, sizeof name, "ADB %.20s", serial[i]);
+            }
+            dv = dev_append(KIND_DEVBAT, "ANDROID", name);
+        }
+        if (!dv)
+            continue;
         dv->capacity = level > 100 ? 100 : level;
-        dv->online = -1;
         dv->voltage_uv = volt_mv > 0 ? volt_mv * 1000 : -1;
-        dv->power_uw = -1;
         switch (status) { /* android BatteryManager constants */
         case 2:  strcpy(dv->status, "CHG"); break;
         case 3:  strcpy(dv->status, "DIS"); break;
         case 4:  strcpy(dv->status, "IDL"); break;
         case 5:  strcpy(dv->status, "FUL"); break;
-        default: strcpy(dv->status, "---"); break;
+        default: break;
         }
-        if (model[i][0]) {
-            char *c;
-            snprintf(dv->label, sizeof dv->label, "%.27s", model[i]);
-            for (c = dv->label; *c; c++)
-                if (*c == '_')
-                    *c = ' ';
-        } else {
-            snprintf(dv->label, sizeof dv->label, "ADB %.20s", serial[i]);
+    }
+}
+
+/* ---------------- shared helpers for extra sources ----------------- */
+
+static int label_exists(const char *label)
+{
+    int i;
+    for (i = 0; i < g_ndevs; i++)
+        if (!SDL_strcasecmp(g_devs[i].label, label))
+            return 1;
+    return 0;
+}
+
+static Dev *dev_append(int kind, const char *tag, const char *label)
+{
+    Dev *dv;
+    char clean[28];
+    if (g_ndevs >= MAX_DEVS)
+        return NULL;
+    snprintf(clean, sizeof clean, "%.24s", label);
+    str_upper(clean);
+    if (label_exists(clean))
+        return NULL;
+    dv = &g_devs[g_ndevs++];
+    memset(dv, 0, sizeof *dv);
+    dv->kind = kind;
+    snprintf(dv->tag, sizeof dv->tag, "%.11s", tag);
+    snprintf(dv->label, sizeof dv->label, "%s", clean);
+    dv->capacity = -1;
+    dv->online = -1;
+    dv->voltage_uv = -1;
+    dv->power_uw = -1;
+    dv->est_min = -1;
+    strcpy(dv->status, "---");
+    return dv;
+}
+
+/* first int in a gvariant-ish string, e.g. "(<int32 85>,)" -> 85 */
+static int gv_int(const char *s)
+{
+    while (*s && (*s < '0' || *s > '9'))
+        s++;
+    return *s ? (int)parse_long(s, -1, 1000000, -1) : -1;
+}
+
+/* first 'quoted' string into out */
+static int gv_str(const char *s, char *out, size_t n)
+{
+    const char *a = strchr(s, '\''), *b;
+    if (!a)
+        return -1;
+    b = strchr(a + 1, '\'');
+    if (!b)
+        return -1;
+    if ((size_t)(b - a - 1) >= n)
+        return -1;
+    memcpy(out, a + 1, (size_t)(b - a - 1));
+    out[b - a - 1] = 0;
+    return 0;
+}
+
+/* ---------------- KDE Connect (phone battery over wifi) ------------ */
+
+static void scan_kdeconnect(void)
+{
+    FILE *p;
+    char buf[2048];
+    char ids[8][64];
+    int nids = 0, i;
+    size_t got;
+
+    p = popen("timeout 2 gdbus call --session --dest org.kde.kdeconnect "
+              "--object-path /modules/kdeconnect "
+              "--method org.kde.kdeconnect.daemon.devices "
+              "true true 2>/dev/null", "r");
+    if (!p)
+        return;
+    got = fread(buf, 1, sizeof buf - 1, p);
+    buf[got] = 0;
+    pclose(p);
+
+    {
+        char *s = buf;
+        while (nids < 8) {
+            char *a = strchr(s, '\''), *b;
+            if (!a)
+                break;
+            b = strchr(a + 1, '\'');
+            if (!b)
+                break;
+            if ((size_t)(b - a - 1) < sizeof ids[0]) {
+                memcpy(ids[nids], a + 1, (size_t)(b - a - 1));
+                ids[nids][b - a - 1] = 0;
+                if (serial_ok(ids[nids]))
+                    nids++;
+            }
+            s = b + 1;
         }
-        str_upper(dv->label);
-        dv->label[24] = 0;
+    }
+
+    for (i = 0; i < nids; i++) {
+        char cmd[320], name[64];
+        int charge, charging;
+        Dev *dv;
+
+        snprintf(cmd, sizeof cmd,
+                 "timeout 2 gdbus call --session --dest org.kde.kdeconnect "
+                 "--object-path /modules/kdeconnect/devices/%.63s "
+                 "--method org.freedesktop.DBus.Properties.Get "
+                 "org.kde.kdeconnect.device.battery charge 2>/dev/null",
+                 ids[i]);
+        p = popen(cmd, "r");
+        if (!p)
+            continue;
+        got = fread(buf, 1, sizeof buf - 1, p);
+        buf[got] = 0;
+        pclose(p);
+        charge = gv_int(buf);
+        if (charge < 0 || charge > 100)
+            continue;
+
+        snprintf(cmd, sizeof cmd,
+                 "timeout 2 gdbus call --session --dest org.kde.kdeconnect "
+                 "--object-path /modules/kdeconnect/devices/%.63s "
+                 "--method org.freedesktop.DBus.Properties.Get "
+                 "org.kde.kdeconnect.device.battery isCharging 2>/dev/null",
+                 ids[i]);
+        p = popen(cmd, "r");
+        if (!p)
+            continue;
+        got = fread(buf, 1, sizeof buf - 1, p);
+        buf[got] = 0;
+        pclose(p);
+        charging = strstr(buf, "true") != NULL;
+
+        snprintf(cmd, sizeof cmd,
+                 "timeout 2 gdbus call --session --dest org.kde.kdeconnect "
+                 "--object-path /modules/kdeconnect/devices/%.63s "
+                 "--method org.freedesktop.DBus.Properties.Get "
+                 "org.kde.kdeconnect.device name 2>/dev/null", ids[i]);
+        p = popen(cmd, "r");
+        name[0] = 0;
+        if (p) {
+            got = fread(buf, 1, sizeof buf - 1, p);
+            buf[got] = 0;
+            pclose(p);
+            gv_str(buf, name, sizeof name);
+        }
+        if (!name[0])
+            snprintf(name, sizeof name, "KDECONN %.16s", ids[i]);
+
+        dv = dev_append(KIND_DEVBAT, "KDECONN", name);
+        if (!dv)
+            continue;
+        dv->capacity = charge;
+        strcpy(dv->status, charging ? "CHG" : "DIS");
+    }
+}
+
+/* ---------------- GSConnect (GNOME shell extension) ----------------- */
+
+static void scan_gsconnect(void)
+{
+    FILE *p;
+    static char buf[32768];
+    size_t got;
+    char *chunk;
+
+    p = popen("timeout 2 gdbus call --session "
+              "--dest org.gnome.Shell.Extensions.GSConnect "
+              "--object-path /org/gnome/Shell/Extensions/GSConnect "
+              "--method org.freedesktop.DBus.ObjectManager"
+              ".GetManagedObjects 2>/dev/null", "r");
+    if (!p)
+        return;
+    got = fread(buf, 1, sizeof buf - 1, p);
+    buf[got] = 0;
+    pclose(p);
+
+    chunk = strstr(buf, "/Device/");
+    while (chunk) {
+        char *next = strstr(chunk + 8, "/Device/");
+        char name[64] = "";
+        int level = -1, charging = 0, connected = 0;
+        char *f;
+        size_t len = next ? (size_t)(next - chunk) : strlen(chunk);
+        char save = chunk[len];
+
+        chunk[len] = 0;
+        if ((f = strstr(chunk, "'Name': <")))
+            gv_str(f + 8, name, sizeof name);
+        if ((f = strstr(chunk, "'Connected': <")))
+            connected = strstr(f, "<true") != NULL;
+        if ((f = strstr(chunk, "'Level': <")))
+            level = gv_int(f + 9);
+        if ((f = strstr(chunk, "'Charging': <")))
+            charging = strstr(f, "<true") != NULL;
+        chunk[len] = save;
+
+        if (name[0] && connected && level >= 0 && level <= 100) {
+            Dev *dv = dev_append(KIND_DEVBAT, "GSCONN", name);
+            if (dv) {
+                dv->capacity = level;
+                strcpy(dv->status, charging ? "CHG" : "DIS");
+            }
+        }
+        chunk = next;
+    }
+}
+
+/* ---------------- UPS via NUT (upsc) -------------------------------- */
+
+static void scan_nut(void)
+{
+    FILE *p;
+    char line[256];
+    char names[4][64];
+    int n = 0, i;
+
+    p = popen("timeout 2 upsc -l 2>/dev/null", "r");
+    if (!p)
+        return;
+    while (fgets(line, sizeof line, p) && n < 4) {
+        line[strcspn(line, "\n")] = 0;
+        if (serial_ok(line))
+            snprintf(names[n++], sizeof names[0], "%.63s", line);
+    }
+    pclose(p);
+
+    for (i = 0; i < n; i++) {
+        char cmd[128], model[64] = "", status[32] = "";
+        int charge = -1, runtime_s = -1;
+        double volt = -1;
+        Dev *dv;
+
+        snprintf(cmd, sizeof cmd, "timeout 2 upsc %.63s 2>/dev/null",
+                 names[i]);
+        p = popen(cmd, "r");
+        if (!p)
+            continue;
+        while (fgets(line, sizeof line, p)) {
+            line[strcspn(line, "\n")] = 0;
+            if (!strncmp(line, "battery.charge:", 15))
+                charge = (int)parse_long(line + 15, -1, 100, -1);
+            else if (!strncmp(line, "battery.runtime:", 16))
+                runtime_s = (int)parse_long(line + 16, -1, 6000000, -1);
+            else if (!strncmp(line, "battery.voltage:", 16))
+                volt = atof(line + 16);
+            else if (!strncmp(line, "ups.model:", 10))
+                snprintf(model, sizeof model, "%.63s", line + 11);
+            else if (!strncmp(line, "ups.status:", 11))
+                snprintf(status, sizeof status, "%.31s", line + 12);
+        }
+        pclose(p);
+        if (charge < 0)
+            continue;
+
+        dv = dev_append(KIND_DEVBAT, "UPS", model[0] ? model : names[i]);
+        if (!dv)
+            continue;
+        dv->capacity = charge > 100 ? 100 : charge;
+        dv->voltage_uv = volt > 0 ? (long)(volt * 1e6) : -1;
+        if (runtime_s > 0) {
+            dv->est_min = runtime_s / 60;
+            dv->est_ttf = 0;
+        }
+        if (strstr(status, "OB"))        strcpy(dv->status, "DIS");
+        else if (strstr(status, "CHRG")) strcpy(dv->status, "CHG");
+        else if (strstr(status, "OL"))   strcpy(dv->status, "IDL");
+    }
+}
+
+/* ---------------- low battery notifications ------------------------ */
+
+enum { AL_OK = 0, AL_WARN, AL_CRIT };
+
+typedef struct {
+    char label[28];
+    int state;
+} Alert;
+
+static Alert g_alerts[MAX_DEVS];
+static int g_nalerts = 0;
+
+/* strip anything shell-risky out of notification text */
+static void sanitize_text(char *s)
+{
+    for (; *s; s++)
+        if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') ||
+              (*s >= '0' && *s <= '9') || strchr(" .%:-", *s)))
+            *s = ' ';
+}
+
+static void send_notification(const char *title, const char *body,
+                              int critical)
+{
+    char t[64], b[96], cmd[320];
+    snprintf(t, sizeof t, "%.60s", title);
+    snprintf(b, sizeof b, "%.90s", body);
+    sanitize_text(t);
+    sanitize_text(b);
+    snprintf(cmd, sizeof cmd,
+             "notify-send -a PWR-REACTOR -i power-reactor -u %s "
+             "\"%s\" \"%s\" >/dev/null 2>&1 &",
+             critical ? "critical" : "normal", t, b);
+    if (system(cmd) == -1)
+        return;
+    if (g_cfg.sound) {
+        snprintf(cmd, sizeof cmd,
+                 "paplay /usr/share/sounds/freedesktop/stereo/%s.oga "
+                 ">/dev/null 2>&1 &",
+                 critical ? "dialog-error" : "dialog-warning");
+        if (system(cmd) == -1)
+            return;
+    }
+}
+
+static void alert_check(void)
+{
+    int i, j;
+    if (!g_cfg.notify)
+        return;
+    for (i = 0; i < g_ndevs; i++) {
+        Dev *dv = &g_devs[i];
+        Alert *al = NULL;
+        int want;
+        if (dv->kind == KIND_MAINS || dv->capacity < 0)
+            continue;
+        for (j = 0; j < g_nalerts; j++)
+            if (!strcmp(g_alerts[j].label, dv->label)) {
+                al = &g_alerts[j];
+                break;
+            }
+        if (!al) {
+            if (g_nalerts >= MAX_DEVS)
+                continue;
+            al = &g_alerts[g_nalerts++];
+            snprintf(al->label, sizeof al->label, "%.27s", dv->label);
+            al->state = AL_OK;
+        }
+        want = AL_OK;
+        if (dv->capacity <= g_cfg.crit_pct)
+            want = AL_CRIT;
+        else if (dv->capacity <= g_cfg.warn_pct)
+            want = AL_WARN;
+        /* charging clears the alarm, and recovery needs hysteresis */
+        if (!strcmp(dv->status, "CHG") ||
+            dv->capacity > g_cfg.warn_pct + 5)
+            al->state = AL_OK;
+        if (want > al->state && strcmp(dv->status, "CHG")) {
+            char title[64], body[96];
+            snprintf(title, sizeof title, "%.27s AT %d%%", dv->label,
+                     dv->capacity);
+            snprintf(body, sizeof body, want == AL_CRIT
+                     ? "CRITICAL - RECHARGE IMMEDIATELY"
+                     : "LOW BATTERY - RECHARGE SOON");
+            send_notification(title, body, want == AL_CRIT);
+            al->state = want;
+        }
+    }
+}
+
+/* slope-based estimate fallback from the charge history */
+static void estimate_from_history(Dev *dv)
+{
+    int i;
+    if (dv->est_min > 0 || dv->capacity < 0)
+        return;
+    for (i = 0; i < g_nhist; i++) {
+        Hist *h = &g_hist[i];
+        int oldest, newest, delta, mins;
+        if (strcmp(h->label, dv->label) || h->used < 30)
+            continue;
+        oldest = h->cap[(h->head - h->used + HIST_N) % HIST_N];
+        newest = h->cap[(h->head - 1 + HIST_N) % HIST_N];
+        if (oldest < 0 || newest < 0)
+            return;
+        delta = newest - oldest;
+        mins = (h->used - 1) * g_cfg.scan_ms / 60000;
+        if (mins < 1 || abs(delta) < 2)
+            return;
+        if (delta < 0 && !strcmp(dv->status, "DIS")) {
+            dv->est_min = newest * mins / -delta;
+            dv->est_ttf = 0;
+        } else if (delta > 0 && !strcmp(dv->status, "CHG")) {
+            dv->est_min = (100 - newest) * mins / delta;
+            dv->est_ttf = 1;
+        }
+        return;
     }
 }
 
@@ -612,6 +1178,9 @@ static int scan_devices(void)
     if (!g_upower_link)
         scan_sysfs();
     scan_adb();
+    scan_kdeconnect();
+    scan_gsconnect();
+    scan_nut();
     qsort(g_devs, (size_t)g_ndevs, sizeof(Dev), dev_cmp);
 
     /* new-plug detection over device batteries */
@@ -646,6 +1215,10 @@ static int scan_devices(void)
     g_pwr_head = (g_pwr_head + 1) % HIST_N;
     if (g_pwr_used < HIST_N)
         g_pwr_used++;
+
+    for (i = 0; i < g_ndevs; i++)
+        estimate_from_history(&g_devs[i]);
+    alert_check();
 
     return popped;
 }
@@ -712,7 +1285,8 @@ static void draw_text(int x, int y, int scale, const char *s, SDL_Color c)
 
 static int text_w(int scale, const char *s)
 {
-    return (int)strlen(s) * 6 * scale - scale;
+    int n = (int)strlen(s);
+    return n ? n * 6 * scale - scale : 0;
 }
 
 static const unsigned char SEG7[10] = {
@@ -1154,7 +1728,7 @@ static void draw_device_row(int idx, const Dev *dv, Uint32 ticks,
 {
     int y = ROW_Y0 + idx * ROW_H;
     int charging = !strcmp(dv->status, "CHG");
-    int critical = dv->capacity >= 0 && dv->capacity <= 15 &&
+    int critical = dv->capacity >= 0 && dv->capacity <= g_cfg.warn_pct &&
                    dv->kind != KIND_MAINS;
     int blink = (ticks / 400) % 2;
     char buf[64];
@@ -1186,15 +1760,37 @@ static void draw_device_row(int idx, const Dev *dv, Uint32 ticks,
     draw_text(SCREEN_X + 44, y + 4, 1, dv->label, g_theme.fg);
     snprintf(buf, sizeof buf, "%s STAT:%s", dv->tag, dv->status);
     draw_text(SCREEN_X + 44, y + 16, 1, buf, g_theme.fg);
-    if (dv->voltage_uv > 0) {
-        if (dv->power_uw >= 0)
-            snprintf(buf, sizeof buf, "%5.2fV %5.2fW",
-                     dv->voltage_uv / 1e6, dv->power_uw / 1e6);
-        else
-            snprintf(buf, sizeof buf, "%5.2fV", dv->voltage_uv / 1e6);
-        draw_text(SCREEN_X + 44, y + 28, 1, buf, g_theme.fg);
-    } else if (dv->capacity < 0 && dv->kind != KIND_MAINS) {
-        draw_text(SCREEN_X + 44, y + 28, 1, "NO TELEMETRY", g_theme.amber);
+    {
+        char est[24] = "";
+        int len = 0;
+        buf[0] = 0;
+        if (dv->est_min > 0) {
+            if (dv->est_min >= 60)
+                snprintf(est, sizeof est, "%s %dH%02dM",
+                         dv->est_ttf ? "FULL IN" : "LEFT",
+                         dv->est_min / 60, dv->est_min % 60);
+            else
+                snprintf(est, sizeof est, "%s %dM",
+                         dv->est_ttf ? "FULL IN" : "LEFT", dv->est_min);
+        }
+        if (dv->voltage_uv > 0) {
+            if (dv->power_uw >= 0)
+                len = snprintf(buf, sizeof buf, "%5.2fV %5.2fW",
+                               dv->voltage_uv / 1e6, dv->power_uw / 1e6);
+            else
+                len = snprintf(buf, sizeof buf, "%5.2fV",
+                               dv->voltage_uv / 1e6);
+        }
+        if (est[0] && len >= 0 && (size_t)len + strlen(est) + 1 < sizeof buf) {
+            if (len)
+                strcat(buf, " ");
+            strcat(buf, est);
+        }
+        if (buf[0])
+            draw_text(SCREEN_X + 44, y + 28, 1, buf, g_theme.fg);
+        else if (dv->capacity < 0 && dv->kind != KIND_MAINS)
+            draw_text(SCREEN_X + 44, y + 28, 1, "NO TELEMETRY",
+                      g_theme.amber);
     }
 
     if (dv->kind == KIND_MAINS) {
@@ -1279,6 +1875,9 @@ typedef void *(*ai_new_path_fn)(const char *, const char *, int,
 typedef void (*ai_set_status_fn)(void *, int);
 typedef void (*ai_set_menu_fn)(void *, GtkMenu *);
 typedef void (*ai_set_title_fn)(void *, const char *);
+typedef void (*ai_set_icon_full_fn)(void *, const char *, const char *);
+typedef void (*ai_set_label_fn)(void *, const char *, const char *);
+typedef void (*ai_set_sec_target_fn)(void *, GtkWidget *);
 
 #ifndef ICON_DIR
 #define ICON_DIR "."
@@ -1286,13 +1885,18 @@ typedef void (*ai_set_title_fn)(void *, const char *);
 
 static int g_tray_ok = 0;
 static ai_set_title_fn g_ai_set_title;
+static ai_set_icon_full_fn g_ai_set_icon;
+static ai_set_label_fn g_ai_set_label;
 static void *g_indicator;
+static int g_tray_icon_state = -1; /* 0 green, 1 amber, 2 red */
+static int g_tray_has_path = 0;
 
 static void on_tray_show(GtkMenuItem *mi, gpointer data)
 {
     (void)mi;
     (void)data;
-    g_want_show = 1;
+    /* middle-click / menu item: toggle */
+    g_want_show = g_visible ? 2 : 1;
 }
 
 static void on_tray_quit(GtkMenuItem *mi, gpointer data)
@@ -1324,11 +1928,16 @@ static int tray_init(void)
     ai_set_status = (ai_set_status_fn)dlsym(h, "app_indicator_set_status");
     ai_set_menu = (ai_set_menu_fn)dlsym(h, "app_indicator_set_menu");
     g_ai_set_title = (ai_set_title_fn)dlsym(h, "app_indicator_set_title");
-    if (!ai_new || !ai_set_status || !ai_set_menu)
+    g_ai_set_icon =
+        (ai_set_icon_full_fn)dlsym(h, "app_indicator_set_icon_full");
+    g_ai_set_label = (ai_set_label_fn)dlsym(h, "app_indicator_set_label");
+    if (!ai_new || !ai_set_status || !ai_set_menu) {
+        dlclose(h);
         return 0;
+    }
 
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("Show Panel");
+    item = gtk_menu_item_new_with_label("Show / Hide Panel");
     g_signal_connect(item, "activate", G_CALLBACK(on_tray_show), NULL);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     item = gtk_separator_menu_item_new();
@@ -1339,24 +1948,54 @@ static int tray_init(void)
     gtk_widget_show_all(menu);
 
     /* APP_INDICATOR_CATEGORY_HARDWARE = 3, STATUS_ACTIVE = 1.
-     * Prefer the bundled reactor trefoil; fall back to the stock
-     * battery icon when the file or entry point is unavailable. */
+     * Icon resolution order: bundled repo dir, installed hicolor theme
+     * (by name), stock battery icon as last resort. */
     g_indicator = NULL;
     icon = fopen(ICON_DIR "/power-reactor.svg", "r");
     if (icon) {
         fclose(icon);
-        if (ai_new_path)
+        if (ai_new_path) {
             g_indicator = ai_new_path("power-reactor", "power-reactor",
                                       3, ICON_DIR);
+            g_tray_has_path = g_indicator != NULL;
+        }
+    }
+    if (!g_indicator) {
+        char p[512];
+        snprintf(p, sizeof p,
+                 "%s/.local/share/icons/hicolor/scalable/apps"
+                 "/power-reactor.svg",
+                 getenv("HOME") ? getenv("HOME") : "");
+        icon = fopen(p, "r");
+        if (!icon)
+            icon = fopen("/usr/share/icons/hicolor/scalable/apps"
+                         "/power-reactor.svg", "r");
+        if (icon) {
+            fclose(icon);
+            g_indicator = ai_new("power-reactor", "power-reactor", 3);
+            g_tray_has_path = 1; /* theme lookup works for variants too */
+        }
     }
     if (!g_indicator)
         g_indicator = ai_new("power-reactor", "battery-good-symbolic", 3);
-    if (!g_indicator)
+    if (!g_indicator) {
+        gtk_widget_destroy(menu);
+        dlclose(h);
         return 0;
+    }
     ai_set_status(g_indicator, 1);
     ai_set_menu(g_indicator, GTK_MENU(menu));
     if (g_ai_set_title)
         g_ai_set_title(g_indicator, "PWR-REACTOR");
+    {
+        ai_set_sec_target_fn sec =
+            (ai_set_sec_target_fn)dlsym(h, "app_indicator_set_secondary_"
+                                           "activate_target");
+        GList *kids = gtk_container_get_children(GTK_CONTAINER(menu));
+        if (sec && kids)
+            sec(g_indicator, GTK_WIDGET(kids->data));
+        g_list_free(kids);
+    }
     return 1;
 }
 
@@ -1367,29 +2006,49 @@ static void tray_pump(void)
             ;
 }
 
-static void tray_update_title(void)
+static void tray_update(void)
 {
     char buf[64];
-    int i, pct = -1;
-    if (!g_tray_ok || !g_ai_set_title)
+    int i, low = -1, state = 0;
+    if (!g_tray_ok)
         return;
-    for (i = 0; i < g_ndevs; i++)
-        if (g_devs[i].kind == KIND_DEVBAT && g_devs[i].capacity >= 0) {
-            pct = g_devs[i].capacity;
-            break;
-        }
-    if (pct >= 0)
-        snprintf(buf, sizeof buf, "PWR-REACTOR - device %d%%", pct);
-    else
+    for (i = 0; i < g_ndevs; i++) {
+        Dev *dv = &g_devs[i];
+        if (dv->kind == KIND_MAINS || dv->capacity < 0)
+            continue;
+        if (dv->kind == KIND_DEVBAT && (low < 0 || dv->capacity < low))
+            low = dv->capacity;
+        if (dv->capacity <= g_cfg.crit_pct)
+            state = 2;
+        else if (state < 1 && (dv->capacity <= g_cfg.warn_pct ||
+                               !strcmp(dv->status, "CHG")))
+            state = 1;
+    }
+    if (g_ai_set_icon && g_tray_has_path && state != g_tray_icon_state) {
+        static const char *names[] = {
+            "power-reactor", "power-reactor-amber", "power-reactor-red"
+        };
+        g_ai_set_icon(g_indicator, names[state], "PWR-REACTOR");
+        g_tray_icon_state = state;
+    }
+    if (g_ai_set_label && g_cfg.tray_label) {
+        if (low >= 0)
+            snprintf(buf, sizeof buf, "%d%%", low);
+        else
+            buf[0] = 0;
+        g_ai_set_label(g_indicator, buf, "100%");
+    }
+    if (g_ai_set_title) {
         snprintf(buf, sizeof buf, "PWR-REACTOR - %d sources", g_ndevs);
-    g_ai_set_title(g_indicator, buf);
+        g_ai_set_title(g_indicator, buf);
+    }
 }
 
 #else
 static int g_tray_ok = 0;
 static int tray_init(void) { return 0; }
 static void tray_pump(void) {}
-static void tray_update_title(void) {}
+static void tray_update(void) {}
 #endif
 
 /* When launched from a snap-packaged terminal (e.g. VSCode) the snap
@@ -1414,6 +2073,17 @@ static void sanitize_snap_env(void)
     }
 }
 
+/* widget mode: the header strip doubles as a drag handle */
+static SDL_HitTestResult widget_hit_test(SDL_Window *w, const SDL_Point *p,
+                                         void *data)
+{
+    (void)w;
+    (void)data;
+    if (p->y < ROW_Y0)
+        return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
+}
+
 static void panel_show(void)
 {
     SDL_ShowWindow(g_win);
@@ -1434,14 +2104,21 @@ int main(int argc, char **argv)
 {
     Uint32 last_scan = 0;
     int start_hidden = 0;
+    int widget = 0;
     int persist;
     int i;
+
+    config_load();
+    g_amber_mode = g_cfg.amber ? 1 : 0;
+    widget = g_cfg.widget ? 1 : 0;
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--hidden"))
             start_hidden = 1;
         else if (!strcmp(argv[i], "--amber"))
             g_amber_mode = 1;
+        else if (!strcmp(argv[i], "--widget"))
+            widget = 1;
     }
 
     sanitize_snap_env();
@@ -1456,11 +2133,31 @@ int main(int argc, char **argv)
     g_win = SDL_CreateWindow("PWR-REACTOR MK.II",
                              SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                              WIN_W, WIN_H,
-                             SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+                             SDL_WINDOW_ALLOW_HIGHDPI
+                             | (widget
+                                ? (SDL_WINDOW_BORDERLESS |
+                                   SDL_WINDOW_ALWAYS_ON_TOP |
+                                   SDL_WINDOW_SKIP_TASKBAR)
+                                : SDL_WINDOW_RESIZABLE)
                              | (start_hidden ? SDL_WINDOW_HIDDEN : 0));
     if (!g_win) {
         fprintf(stderr, "window failed: %s\n", SDL_GetError());
         return 1;
+    }
+    if (widget) {
+        int wx = g_cfg.widget_x, wy = g_cfg.widget_y;
+        if (wx < 0 || wy < 0) {
+            SDL_Rect ub;
+            if (SDL_GetDisplayUsableBounds(0, &ub) == 0) {
+                wx = ub.x + ub.w - WIN_W - 16;
+                wy = ub.y + 40;
+            } else {
+                wx = 40;
+                wy = 40;
+            }
+        }
+        SDL_SetWindowPosition(g_win, wx, wy);
+        SDL_SetWindowHitTest(g_win, widget_hit_test, NULL);
     }
     g_r = SDL_CreateRenderer(g_win, -1,
                              SDL_RENDERER_ACCELERATED |
@@ -1481,7 +2178,7 @@ int main(int argc, char **argv)
 
     theme_apply();
     scan_devices();
-    tray_update_title();
+    tray_update();
     srand((unsigned)time(NULL));
 
     while (g_running) {
@@ -1501,8 +2198,11 @@ int main(int argc, char **argv)
         tray_pump();
 
         if (g_want_show) {
+            if (g_want_show == 2)
+                panel_hide();
+            else
+                panel_show();
             g_want_show = 0;
-            panel_show();
         }
 
         while (SDL_PollEvent(&ev)) {
@@ -1538,10 +2238,10 @@ int main(int argc, char **argv)
             }
         }
 
-        if (!g_hold && ticks - last_scan > SCAN_INTERVAL_MS) {
-            if (scan_devices())
+        if (!g_hold && ticks - last_scan > (Uint32)g_cfg.scan_ms) {
+            if (scan_devices() && g_cfg.popup_on_plug)
                 panel_show(); /* new device battery plugged in */
-            tray_update_title();
+            tray_update();
             last_scan = ticks;
         }
 

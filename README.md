@@ -1,13 +1,23 @@
 # PWR-REACTOR MK.II
 
-A retro military CRT/VFD desktop widget for Linux that shows the battery
-and power status of every connected device - laptop battery, phones,
-wireless mice/keyboards, headsets and the AC line.
+[![build](https://github.com/lahirunirmalx/PWR-REACTOR/actions/workflows/build.yml/badge.svg)](https://github.com/lahirunirmalx/PWR-REACTOR/actions/workflows/build.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Everything is drawn procedurally in a single C file with SDL2: phosphor
-dot-matrix VFD font with additive glow, seven-segment ghost digits, CRT
-scanlines/vignette/flicker, incandescent dome lamps, heavy-duty toggle
-switches, a scrolling charge-trend scope and an analog bus-load meter.
+A retro military CRT/VFD battery monitor for Linux. One panel for every
+battery you own: laptop, phones, wireless mice and keyboards, earbuds,
+gamepads, UPS units - with desktop alerts before any of them die.
+
+![demo](screenshots/demo.gif)
+
+## Why
+
+Your desktop tells you when the *laptop* battery is low. It says nothing
+when your wireless mouse is about to die mid-meeting, your earbuds have
+5 minutes left, or your phone never actually started charging on that
+cable. PWR-REACTOR watches every battery the machine can see, estimates
+time remaining, and raises a desktop notification (with a suitably
+retro klaxon) before anything dies - all wrapped in a 1970s reactor
+control panel aesthetic, because monitoring should be fun.
 
 ![green phosphor](screenshots/panel-green.png)
 
@@ -15,26 +25,49 @@ switches, a scrolling charge-trend scope and an analog bus-load meter.
 
 ## Features
 
-- **Live telemetry** for every power source the system knows about,
-  rescanned every 2 seconds. Primary source is `upower --dump` (proper
-  model names, phone/mouse/keyboard batteries over USB and Bluetooth),
-  with a raw `/sys/class/power_supply` fallback.
-- **Per-device row**: status lamp, model name, type tag, charge state,
-  voltage/wattage, 15-segment bar gauge and big 7-segment percent
-  readout. Charging devices get a blinking amber lamp and a sweep
-  animation; below 15% the row blinks red.
-- **Charge trend scope**: last ~6 minutes of charge history for every
-  battery as phosphor-persistence traces (older samples fade), plus a
-  dim histogram of total bus load along the bottom.
-- **Analog bus-load meter**: damped needle, auto-ranging scale and a
-  red peak-hold marker.
-- **Tray resident**: closing the window hides it to a tray icon - a
-  green radiation trefoil (StatusNotifier via `libayatana-appindicator`,
-  loaded with `dlopen` so no dev package is required). Menu:
-  Show Panel / Quit.
-- **Pops up on plug-in**: when a new device battery appears, the panel
-  raises itself automatically.
-- **systemd user service** included, so it starts with your session.
+- **Live telemetry** for every power source, rescanned every 2 seconds
+  (configurable). Sources, in order: `upower`, raw
+  `/sys/class/power_supply`, `adb` (Android over USB), KDE Connect and
+  GSConnect (phone over Wi-Fi, D-Bus), NUT (`upsc`, UPS units).
+- **Low battery alerts**: desktop notifications with hysteresis at
+  configurable warn/critical thresholds, optional alert sound.
+- **Time estimates**: time-to-empty / time-to-full from upower when
+  available, otherwise computed from the observed charge slope.
+- **Per-device row**: status lamp, model name, source tag, charge
+  state, voltage/wattage, segment bar gauge, 7-segment percent readout.
+- **Charge trend scope**: ~6 minutes of history as phosphor-persistence
+  traces plus a bus-load histogram.
+- **Analog bus-load meter**: damped needle, auto-ranging, peak hold.
+- **Dynamic tray icon**: green/amber/red reactor trefoil follows worst
+  device state; lowest device percentage shown as a tray label;
+  middle-click toggles the panel.
+- **Pops up on plug-in**: new device battery raises the panel.
+- **Widget mode** (`--widget`): borderless always-on-top mini panel,
+  dragged by its header, skipped in the taskbar.
+- **Tray resident**: closing the window hides it; quit from the tray
+  menu or with `Q`.
+
+## Install
+
+From source:
+
+```sh
+sudo apt install libsdl2-dev libgtk-3-dev   # gtk only needed for tray
+make
+make install            # ~/.local/bin + icons + desktop entry
+make install-service    # start with your session, hidden in tray
+```
+
+Or grab the `.deb` from
+[Releases](https://github.com/lahirunirmalx/PWR-REACTOR/releases):
+
+```sh
+sudo dpkg -i power-reactor_*_amd64.deb
+systemctl --user enable --now power-reactor
+```
+
+Without GTK dev headers the app still builds - it just runs without a
+tray icon.
 
 ## Controls
 
@@ -46,51 +79,49 @@ switches, a scrolling charge-trend scope and an analog bus-load meter.
 |            | ESC | hide to tray                        |
 |            | Q   | quit                                |
 
-Toggles are clickable. CLI flags: `--hidden` (start in tray),
-`--amber` (start with amber phosphor).
+CLI flags: `--hidden` (start in tray), `--amber`, `--widget`.
 
-## Build
+## Configuration
 
-```sh
-sudo apt install libsdl2-dev libgtk-3-dev   # gtk only needed for tray
-make
-./power_reactor
+`~/.config/power-reactor.conf` is created with defaults on first run:
+
+```ini
+scan_ms=2000        # rescan interval
+warn_pct=15         # low battery warning threshold
+crit_pct=5          # critical threshold
+popup_on_plug=1     # raise panel when a device battery appears
+notify=1            # desktop notifications
+sound=1             # alert sound
+amber=0             # amber phosphor by default
+tray_label=1        # lowest device percentage next to tray icon
+widget=0            # widget mode by default
+widget_x=-1         # widget position, -1 = auto top-right
+widget_y=-1
 ```
-
-Without GTK dev headers the app still builds - it just runs without a
-tray icon.
-
-## Run as a service
-
-```sh
-make install-service     # enable + start systemd user service
-make uninstall-service
-```
-
-The service starts the panel hidden in the tray at login; it pops up
-whenever a device with a battery is plugged in.
 
 ## Supported devices
 
-Anything that reports battery state through a standard Linux interface
-shows up automatically:
+Anything that reports battery state through a standard interface shows
+up automatically:
 
 - **USB HID power devices**: wireless mouse/keyboard receivers,
-  gamepads (DualShock/DualSense, Xbox via xpadneo), styluses - the
-  kernel exposes them in `/sys/class/power_supply` and upower picks
-  them up.
+  gamepads (DualShock/DualSense, Xbox via xpadneo), styluses.
 - **Logitech Unifying / HID++** receivers (via upower).
 - **Bluetooth devices** advertising the GATT battery service: phones,
   earbuds, headsets, mice, keyboards (via BlueZ + upower).
-- **iPhones over USB**: charge level comes from `upower` + `usbmuxd`;
-  the kernel's `apple_mfi_fastcharge` driver alone does not expose it.
-  Pair/trust the phone once for telemetry to appear.
-- **Android over USB**: no standard kernel interface exists, so the
-  scanner falls back to `adb shell dumpsys battery`. Install
-  `platform-tools` (adb) and enable USB debugging on the phone; it then
-  appears with an `ANDROID` tag like any other device. Bluetooth-paired
-  Androids work without adb.
-- **UPS units** speaking the USB HID power-device class (via upower).
+- **iPhones over USB**: via `upower` + `usbmuxd`. Pair/trust the phone
+  once for telemetry to appear.
+- **Android**: over USB with USB debugging enabled (`adb`), or over
+  Wi-Fi through KDE Connect / GSConnect, or paired via Bluetooth.
+- **UPS units**: USB HID power-device class (upower) or NUT (`upsc`).
 
 Devices that expose no charge data show dashed digits and a
 `NO TELEMETRY` tag.
+
+## Contributing
+
+Issues and PRs welcome - see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)
