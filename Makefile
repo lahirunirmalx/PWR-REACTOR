@@ -17,9 +17,14 @@ ifeq ($(strip $(GTK_CFLAGS)),)
 $(error GTK 3 development files not found - install libgtk-3-dev)
 endif
 
+# ICON_DIR lets `make run` use the icons in this tree. Installed and
+# packaged builds must not carry a build path, so they set it empty and
+# the tray resolves icons from the hicolor theme instead.
+ICON_DIR ?= $(CURDIR)/icons
+
 CFLAGS  += -O2 -Wall -Wextra -std=gnu99 \
            -DAPP_VERSION='"$(VERSION)"' \
-           -DICON_DIR='"$(CURDIR)/icons"' \
+           -DICON_DIR='"$(ICON_DIR)"' \
            $(GTK_CFLAGS)
 LDLIBS  += $(GTK_LIBS) -ldl -lm
 
@@ -79,8 +84,9 @@ uninstall-service:
 	rm -f $(HOME)/.config/systemd/user/power-reactor.service
 	systemctl --user daemon-reload
 
-deb: $(BIN)
-	rm -rf build/pkg
+deb:
+	rm -rf build/pkg $(BIN)
+	$(MAKE) $(BIN) ICON_DIR=
 	$(MAKE) install DESTDIR=build/pkg PREFIX=/usr
 	# caches belong to the installing system, not inside the package
 	rm -f build/pkg/usr/share/applications/mimeinfo.cache

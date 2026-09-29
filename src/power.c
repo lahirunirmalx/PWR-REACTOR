@@ -12,7 +12,6 @@
 
 #include "power.h"
 
-#include <ctype.h>
 #include <strings.h>
 #include <dirent.h>
 #include <errno.h>
@@ -20,7 +19,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #define SYSFS_PS "/sys/class/power_supply"
@@ -31,6 +29,14 @@
 /* ------------------------------------------------------------------ */
 
 Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 0};
+
+/* step over leading blanks without ever passing the terminator */
+static const char *skip_spaces(const char *s)
+{
+    while (*s == ' ' || *s == '\t')
+        s++;
+    return s;
+}
 
 /* range-checked strtol for every number that comes from an external
  * process, a device or the config file. atoi overflow is UB. */
@@ -103,15 +109,19 @@ void power_config_load(void)
         return;
     }
     while (fgets(line, sizeof line, f)) {
-        char *eq, *key = line, *val;
-        line[strcspn(line, "\n")] = 0;
-        if (line[0] == '#' || !line[0])
+        char *eq, *key, *val, *end;
+        line[strcspn(line, "\r\n")] = 0;
+        key = (char *)skip_spaces(line);
+        if (key[0] == '#' || !key[0])
             continue;
-        eq = strchr(line, '=');
+        eq = strchr(key, '=');
         if (!eq)
             continue;
         *eq = 0;
-        val = eq + 1;
+        val = (char *)skip_spaces(eq + 1);
+        /* trim trailing blanks from the key so "scan_ms = 2000" works */
+        for (end = eq - 1; end >= key && (*end == ' ' || *end == '\t');)
+            *end-- = 0;
         if (!strcmp(key, "scan_ms"))
             g_cfg.scan_ms = (int)parse_long(val, 500, 600000, 2000);
         else if (!strcmp(key, "warn_pct"))
@@ -146,8 +156,7 @@ int   g_upower_link = 0;
 
 Hist  g_hist[MAX_DEVS];
 int   g_nhist = 0;
-float g_pwr_hist[HIST_N];
-int   g_pwr_head = 0, g_pwr_used = 0;
+float g_pwr_now = 0.0f;
 
 static void hist_push(const char *label, int cap)
 {
@@ -159,9 +168,19 @@ static void hist_push(const char *label, int cap)
             break;
         }
     if (!h) {
-        if (g_nhist >= MAX_DEVS)
-            return;
-        h = &g_hist[g_nhist++];
+        if (g_nhist < MAX_DEVS) {
+            h = &g_hist[g_nhist++];
+        } else {
+            /* full: recycle a slot whose device is gone rather than
+             * refusing history for every device seen from now on */
+            for (i = 0; i < g_nhist; i++)
+                if (!g_hist[i].active) {
+                    h = &g_hist[i];
+                    break;
+                }
+            if (!h)
+                return;
+        }
         memset(h, 0, sizeof *h);
         snprintf(h->label, sizeof h->label, "%.27s", label);
     }
@@ -183,9 +202,15 @@ static void str_upper(char *s)
             *s -= 32;
 }
 
+/* qsort is not stable, so ties are broken by name: without this two
+ * devices of the same kind can swap places between scans and force the
+ * UI to rebuild every row */
 static int dev_cmp(const void *a, const void *b)
 {
-    return ((const Dev *)a)->kind - ((const Dev *)b)->kind;
+    const Dev *x = a, *y = b;
+    if (x->kind != y->kind)
+        return x->kind - y->kind;
+    return strcmp(x->label, y->label);
 }
 
 typedef struct {
@@ -291,7 +316,7 @@ static void ublock_flush(const UBlock *u)
 
 static int scan_upower(void)
 {
-    FILE *p = popen("upower --dump 2>/dev/null", "r");
+    FILE *p = popen("LC_ALL=C timeout 2 upower --dump 2>/dev/null </dev/null", "r");
     char line[256];
     UBlock u;
 
@@ -497,7 +522,7 @@ static void scan_adb(void)
     char model[8][28];
     int n = 0, i;
 
-    p = popen("timeout 2 adb devices -l 2>/dev/null", "r");
+    p = popen("timeout 2 adb devices -l 2>/dev/null </dev/null", "r");
     if (!p)
         return;
     while (fgets(line, sizeof line, p) && n < 8) {
@@ -529,7 +554,8 @@ static void scan_adb(void)
         if (!serial_ok(serial[i]))
             continue;
         snprintf(cmd, sizeof cmd,
-                 "timeout 2 adb -s %.63s shell dumpsys battery 2>/dev/null",
+                 "timeout 2 adb -s %.63s shell dumpsys battery "
+                 "2>/dev/null </dev/null",
                  serial[i]);
         p = popen(cmd, "r");
         if (!p)
@@ -647,7 +673,7 @@ static void scan_kdeconnect(void)
     p = popen("timeout 2 gdbus call --session --dest org.kde.kdeconnect "
               "--object-path /modules/kdeconnect "
               "--method org.kde.kdeconnect.daemon.devices "
-              "true true 2>/dev/null", "r");
+              "true true 2>/dev/null </dev/null", "r");
     if (!p)
         return;
     got = fread(buf, 1, sizeof buf - 1, p);
@@ -745,7 +771,7 @@ static void scan_gsconnect(void)
               "--dest org.gnome.Shell.Extensions.GSConnect "
               "--object-path /org/gnome/Shell/Extensions/GSConnect "
               "--method org.freedesktop.DBus.ObjectManager"
-              ".GetManagedObjects 2>/dev/null", "r");
+              ".GetManagedObjects 2>/dev/null </dev/null", "r");
     if (!p)
         return;
     got = fread(buf, 1, sizeof buf - 1, p);
@@ -792,7 +818,7 @@ static void scan_nut(void)
     char names[4][64];
     int n = 0, i;
 
-    p = popen("timeout 2 upsc -l 2>/dev/null", "r");
+    p = popen("timeout 2 upsc -l 2>/dev/null </dev/null", "r");
     if (!p)
         return;
     while (fgets(line, sizeof line, p) && n < 4) {
@@ -808,7 +834,7 @@ static void scan_nut(void)
         double volt = -1;
         Dev *dv;
 
-        snprintf(cmd, sizeof cmd, "timeout 2 upsc %.63s 2>/dev/null",
+        snprintf(cmd, sizeof cmd, "timeout 2 upsc %.63s 2>/dev/null </dev/null",
                  names[i]);
         p = popen(cmd, "r");
         if (!p)
@@ -822,9 +848,11 @@ static void scan_nut(void)
             else if (!strncmp(line, "battery.voltage:", 16))
                 volt = atof(line + 16);
             else if (!strncmp(line, "ups.model:", 10))
-                snprintf(model, sizeof model, "%.63s", line + 11);
+                snprintf(model, sizeof model, "%.63s",
+                         skip_spaces(line + 10));
             else if (!strncmp(line, "ups.status:", 11))
-                snprintf(status, sizeof status, "%.31s", line + 12);
+                snprintf(status, sizeof status, "%.31s",
+                         skip_spaces(line + 11));
         }
         pclose(p);
         if (charge < 0)
@@ -858,14 +886,6 @@ static Alert g_alerts[MAX_DEVS];
 static int g_nalerts = 0;
 
 /* strip anything shell-risky out of notification text */
-static void sanitize_text(char *s)
-{
-    for (; *s; s++)
-        if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') ||
-              (*s >= '0' && *s <= '9') || strchr(" .%:-", *s)))
-            *s = ' ';
-}
-
 static PowerNotifyFn g_notify_fn;
 static void *g_notify_user;
 
@@ -883,8 +903,6 @@ static void send_notification(const char *title, const char *body,
         return;
     snprintf(t, sizeof t, "%.60s", title);
     snprintf(b, sizeof b, "%.90s", body);
-    sanitize_text(t);
-    sanitize_text(b);
     g_notify_fn(t, b, critical, g_notify_user);
 }
 
@@ -905,9 +923,19 @@ static void alert_check(void)
                 break;
             }
         if (!al) {
-            if (g_nalerts >= MAX_DEVS)
-                continue;
-            al = &g_alerts[g_nalerts++];
+            if (g_nalerts < MAX_DEVS) {
+                al = &g_alerts[g_nalerts++];
+            } else {
+                /* full: recycle the entry of a device that is no longer
+                 * present, so a long-running session keeps alerting */
+                for (j = 0; j < g_nalerts; j++)
+                    if (!label_exists(g_alerts[j].label)) {
+                        al = &g_alerts[j];
+                        break;
+                    }
+                if (!al)
+                    continue;
+            }
             snprintf(al->label, sizeof al->label, "%.27s", dv->label);
             al->state = AL_OK;
         }
@@ -1008,10 +1036,7 @@ int power_scan(void)
         if (g_devs[i].power_uw > 0)
             total_w += (float)(g_devs[i].power_uw / 1e6);
     }
-    g_pwr_hist[g_pwr_head] = total_w;
-    g_pwr_head = (g_pwr_head + 1) % HIST_N;
-    if (g_pwr_used < HIST_N)
-        g_pwr_used++;
+    g_pwr_now = total_w;
 
     for (i = 0; i < g_ndevs; i++)
         estimate_from_history(&g_devs[i]);
@@ -1025,21 +1050,10 @@ int power_scan(void)
 /* derived values for the dashboard                                    */
 /* ------------------------------------------------------------------ */
 
-/* most recent total bus load sample, in watts */
+/* most recent total bus load, in watts */
 float power_total_load_w(void)
 {
-    if (!g_pwr_used)
-        return 0.0f;
-    return g_pwr_hist[(g_pwr_head - 1 + HIST_N) % HIST_N];
-}
-
-const Hist *power_hist_for(const char *label)
-{
-    int i;
-    for (i = 0; i < g_nhist; i++)
-        if (!strcmp(g_hist[i].label, label))
-            return &g_hist[i];
-    return NULL;
+    return g_pwr_now;
 }
 
 /* lowest charge across every battery, -1 when nothing reports one */

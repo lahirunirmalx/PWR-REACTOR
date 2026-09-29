@@ -54,9 +54,7 @@ extern Dev    g_devs[MAX_DEVS];
 extern int    g_ndevs;
 extern Hist   g_hist[MAX_DEVS];
 extern int    g_nhist;
-extern float  g_pwr_hist[HIST_N]; /* total bus load in W, one per scan */
-extern int    g_pwr_head;
-extern int    g_pwr_used;
+extern float  g_pwr_now;          /* latest total bus load, in watts */
 extern int    g_upower_link;      /* 1 = upower answered, 0 = sysfs only */
 
 /* alert sink, installed by the UI so notifications can go through the
@@ -72,9 +70,8 @@ void power_config_path(char *out, unsigned long n);
 int power_scan(void);
 
 /* derived values for the dashboard */
-float       power_total_load_w(void);
-const Hist *power_hist_for(const char *label);
-int         power_worst_pct(void);   /* lowest device percent, -1 none */
-int         power_any_charging(void);
+float power_total_load_w(void);
+int   power_worst_pct(void);   /* lowest device percent, -1 none */
+int   power_any_charging(void);
 
 #endif /* POWER_H */

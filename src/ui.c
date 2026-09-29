@@ -103,6 +103,7 @@ static void series_color(const Palette *p, int i, GdkRGBA *out)
 
 typedef struct {
     char       label[28];
+    char       iconname[64]; /* last name set, to skip lookups */
     GtkWidget *row;
     GtkWidget *icon;
     GtkWidget *name;
@@ -277,8 +278,6 @@ static gboolean on_chart_draw(GtkWidget *w, cairo_t *cr, gpointer data)
 
         cairo_set_source_rgba(cr, pal.fg.red, pal.fg.green, pal.fg.blue,
                               0.45);
-        cairo_select_font_face(cr, "Ubuntu", CAIRO_FONT_SLANT_NORMAL,
-                               CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_size(cr, 10);
         cairo_move_to(cr, 2, y + 3);
         cairo_show_text(cr, g == 0 ? "0%" : g == 1 ? "50%" : "100%");
@@ -387,11 +386,16 @@ static void row_bind(Row *r, const Dev *dv)
     int n = 0;
 
     device_icon_name(dv, icon, sizeof icon);
-    set_icon(r->icon, icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
+    if (strcmp(icon, r->iconname)) {
+        set_icon(r->icon, icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
+        snprintf(r->iconname, sizeof r->iconname, "%s", icon);
+    }
     display_name(dv, name, sizeof name);
     gtk_label_set_text(GTK_LABEL(r->name), name);
 
     n += snprintf(sub + n, sizeof sub - n, "%s", status_text(dv));
+    if (n >= (int)sizeof sub)
+        n = (int)sizeof sub - 1;
     if (dv->voltage_uv > 0)
         n += snprintf(sub + n, sizeof sub - n, "  -  %.2f V",
                       dv->voltage_uv / 1e6);
@@ -588,9 +592,14 @@ static void on_power_notify(const char *title, const char *body,
         g_notification_set_icon(n, ic);
         g_object_unref(ic);
     }
-    g_application_send_notification(G_APPLICATION(ui->app),
-                                    critical ? "battery-critical"
-                                             : "battery-low", n);
+    {
+        /* one id per device, so a low phone does not replace a low
+         * laptop in the notification tray */
+        char *id = g_strdup_printf("battery-%s-%s",
+                                   critical ? "crit" : "low", title);
+        g_application_send_notification(G_APPLICATION(ui->app), id, n);
+        g_free(id);
+    }
     g_object_unref(n);
     play_alert_sound(critical);
 }
@@ -603,7 +612,8 @@ static void act_refresh(GSimpleAction *a, GVariant *p, gpointer data)
 {
     (void)a;
     (void)p;
-    power_scan();
+    /* redraw from the model the timer maintains: scanning here would
+     * push an off-cadence history sample and skew the slope estimate */
     tray_update();
     dashboard_refresh(data);
 }
@@ -895,13 +905,17 @@ static void on_activate(GtkApplication *app, gpointer data)
     gtk_stack_add_named(GTK_STACK(ui->stack), empty_page_new(), "empty");
     gtk_container_add(GTK_CONTAINER(ui->window), ui->stack);
 
-    /* the window stays registered with the application while hidden,
-     * so --hidden keeps the process alive in the tray */
-    gtk_widget_show_all(ui->window);
-    if (g_start_hidden) {
-        gtk_widget_hide(ui->window);
-        g_start_hidden = 0;
-    }
+    /* Show the contents but map the window itself only when it is
+     * wanted: show_all() followed by hide() paints one frame, which
+     * flashes on every login when the service starts us hidden. The
+     * window stays registered with the application either way, so the
+     * process lives on in the tray. */
+    gtk_widget_show_all(ui->stack);
+    /* without a tray icon there is no way back to a hidden window, so
+     * --hidden is ignored rather than stranding the app off screen */
+    if (!g_start_hidden || !ui->tray_ok)
+        gtk_widget_show(ui->window);
+    g_start_hidden = 0;
     dashboard_refresh(ui);
 }
 

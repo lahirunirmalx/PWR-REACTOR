@@ -4,7 +4,7 @@ Thanks for your interest in PWR-REACTOR.
 
 ## Ground rules
 
-- The whole app is one C file (`main.c`) plus a Makefile - please keep
+- The app is a handful of C files under `src/` plus a Makefile - please keep
   it that way. No new build systems, no new runtime dependencies
   without discussion. Optional integrations should degrade gracefully
   when the tool they talk to is missing (see the adb / NUT / KDE

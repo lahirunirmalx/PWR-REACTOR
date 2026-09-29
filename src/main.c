@@ -33,10 +33,15 @@ static void sanitize_snap_env(void)
         "GDK_PIXBUF_MODULEDIR", "GSETTINGS_SCHEMA_DIR", "GIO_MODULE_DIR",
         "XDG_DATA_HOME", "LOCPATH",
     };
-    const char *lp;
+    const char *lp, *name;
     size_t i;
 
     if (!getenv("SNAP"))
+        return;
+    /* SNAP is also set inside our own snap, where these variables are
+     * exactly what the gnome extension needs. Only strip a foreign one. */
+    name = getenv("SNAP_NAME");
+    if (name && !strcmp(name, "power-reactor"))
         return;
     for (i = 0; i < sizeof vars / sizeof vars[0]; i++)
         unsetenv(vars[i]);
