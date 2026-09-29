@@ -115,6 +115,7 @@ deb:
 
 # unit tests for the model: no GTK, no real hardware
 test: tests/test_power.c src/power.c src/power.h
+	mkdir -p build
 	$(CC) -O0 -g -Wall -Wextra -std=gnu99 -fsanitize=address,undefined \
 	  -o build/test_power tests/test_power.c src/power.c -lm
 	./build/test_power

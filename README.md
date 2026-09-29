@@ -116,7 +116,8 @@ popup_on_plug=1     # raise the window when a device battery appears
 notify=1            # desktop notifications
 sound=1             # alert sound
 dark=0              # force the dark theme, 0 = follow the desktop
-tray_label=1        # device percentage next to the tray icon
+tray_label=1        # show text next to the tray icon
+tray_name=1         # name the device in that text
 tray_cycle_ms=4000  # rotate the tray through each battery (0 = off)
 compact=0           # start in the compact window size
 ```

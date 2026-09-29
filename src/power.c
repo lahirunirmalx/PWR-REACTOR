@@ -28,7 +28,7 @@
 /* first run. key=value lines, # comments.                             */
 /* ------------------------------------------------------------------ */
 
-Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 4000, 0};
+Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 1, 4000, 0};
 
 /* step over leading blanks without ever passing the terminator */
 static const char *skip_spaces(const char *s)
@@ -91,8 +91,12 @@ static void config_write_default(const char *path)
         "sound=1\n"
         "# force the dark theme (0 = follow the desktop setting)\n"
         "dark=0\n"
-        "# show the device percentage next to the tray icon\n"
+        "# show the percentage next to the tray icon\n"
         "tray_label=1\n"
+        "# name the device in the tray text. GNOME renders no tooltip\n"
+        "# for tray icons, so this is the only way to tell which\n"
+        "# device the percentage belongs to.\n"
+        "tray_name=1\n"
         "# rotate the tray through each battery, milliseconds (0 = off)\n"
         "tray_cycle_ms=4000\n"
         "# start in the compact window size\n"
@@ -140,6 +144,8 @@ void power_config_load(void)
             g_cfg.dark = (int)parse_long(val, 0, 1, 0);
         else if (!strcmp(key, "tray_label"))
             g_cfg.tray_label = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "tray_name"))
+            g_cfg.tray_name = (int)parse_long(val, 0, 1, 1);
         else if (!strcmp(key, "tray_cycle_ms"))
             g_cfg.tray_cycle_ms =
                 (int)parse_long(val, 0, 600000, 4000);
@@ -1088,6 +1094,29 @@ void power_display_name(const Dev *dv, char *out, unsigned long n)
     for (i = 0; out[i]; i++)
         if (out[i] == '_')
             out[i] = ' ';
+}
+#define SHORT_NAME_CHARS 15
+
+void power_short_name(const Dev *dv, char *out, unsigned long n)
+{
+    char full[32];
+    unsigned long i = 0, chars = 0;
+
+    power_display_name(dv, full, sizeof full);
+    /* Count character starts, not bytes: a UTF-8 continuation byte is
+     * 10xxxxxx and never begins a character, so stopping on one would
+     * split it and produce invalid text. */
+    while (full[i]) {
+        if (((unsigned char)full[i] & 0xC0) != 0x80) {
+            if (chars == SHORT_NAME_CHARS)
+                break;
+            chars++;
+        }
+        i++;
+    }
+    if (i >= n)
+        i = n - 1;
+    snprintf(out, n, "%.*s", (int)i, full);
 }
 
 /* ------------------------------------------------------------------ */

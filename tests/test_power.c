@@ -132,8 +132,68 @@ static void test_worst_and_charging(void)
     check(power_worst_pct() == -1, "no batteries means no worst value");
 }
 
+/* The tray label is the only place GNOME can show which device a
+ * percentage belongs to, so the clipping has to be right. */
+static void test_short_name(void)
+{
+    char out[32];
+
+    g_ndevs = 0;
+    add(KIND_DEVBAT, "Buds",             55, "FUL");
+    add(KIND_DEVBAT, "Lahiru's iPhone",  32, "CHG");
+    add(KIND_DEVBAT, "A_very_long_device_name_here", 10, "DIS");
+    add(KIND_MAINS,  "line_power_ADP0",  -1, "---");
+
+    power_short_name(&g_devs[0], out, sizeof out);
+    check_str(out, "Buds", "a short name is left alone");
+
+    /* exactly 15 characters: right on the limit, so it is kept whole */
+    power_short_name(&g_devs[1], out, sizeof out);
+    check_str(out, "Lahiru's iPhone", "a name at the limit is kept whole");
+
+    power_short_name(&g_devs[2], out, sizeof out);
+    check(strlen(out) <= 15, "a long name is clipped");
+    check_str(out, "A very long dev", "clipping keeps the readable name");
+
+    power_short_name(&g_devs[3], out, sizeof out);
+    check_str(out, "AC adapter", "mains keeps its readable name");
+
+    /* a tiny destination must still be respected */
+    power_short_name(&g_devs[1], out, 5);
+    check(strlen(out) < 5, "never writes past the buffer");
+}
+
+/* Device names come from hardware and are not guaranteed ASCII, so a
+ * clip must never land inside a multi-byte character. */
+static void test_short_name_utf8(void)
+{
+    char out[32];
+    unsigned char *p;
+    int i;
+
+    g_ndevs = 0;
+    /* 20 copies of U+00E9 (two bytes each): clipping at 15 characters
+     * must cut after 30 bytes, not mid-character */
+    add(KIND_DEVBAT, "", 50, "DIS");
+    p = (unsigned char *)g_devs[0].label;
+    for (i = 0; i < 10; i++) {
+        *p++ = 0xC3;
+        *p++ = 0xA9;
+    }
+    *p = 0;
+
+    power_short_name(&g_devs[0], out, sizeof out);
+    for (i = 0; out[i]; i++)
+        ;
+    check(i % 2 == 0, "clip lands on a character boundary, not mid-byte");
+    check((unsigned char)out[i - 1] == 0xA9,
+          "last byte is a completed character, not a dangling lead byte");
+}
+
 int main(void)
 {
+    test_short_name();
+    test_short_name_utf8();
     test_battery_selection();
     test_display_helpers();
     test_worst_and_charging();

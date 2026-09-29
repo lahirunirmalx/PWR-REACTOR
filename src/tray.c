@@ -162,7 +162,7 @@ int tray_cycle_next(void)
 
 void tray_update(void)
 {
-    char label[32], title[128], name[32];
+    char label[64], title[128], name[32];
     int i, nbats, at, state = 0;
 
     if (!g_tray_ok)
@@ -198,7 +198,14 @@ void tray_update(void)
     if (at >= 0) {
         const Dev *cur = &g_devs[at];
         power_display_name(cur, name, sizeof name);
-        snprintf(label, sizeof label, "%d%%", cur->capacity);
+        if (g_cfg.tray_name) {
+            char shortn[32];
+            power_short_name(cur, shortn, sizeof shortn);
+            snprintf(label, sizeof label, "%s %d%%", shortn,
+                     cur->capacity);
+        } else {
+            snprintf(label, sizeof label, "%d%%", cur->capacity);
+        }
         /* the hover text names the device the label belongs to, which
          * is the only way to tell them apart while it rotates */
         if (nbats > 1)
@@ -214,7 +221,10 @@ void tray_update(void)
     }
 
     if (g_ai_set_label)
-        g_ai_set_label(g_indicator, g_cfg.tray_label ? label : "", "100%");
+        g_ai_set_label(g_indicator, g_cfg.tray_label ? label : "",
+                       g_cfg.tray_name ? "MMMMMMMMMMMMMMM 100%"
+                                       : "100%");
+
     if (g_ai_set_title)
         g_ai_set_title(g_indicator, title);
 }

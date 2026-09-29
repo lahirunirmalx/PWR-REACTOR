@@ -23,7 +23,8 @@ typedef struct {
     int notify;
     int sound;
     int dark;          /* 0 follow desktop, 1 force dark */
-    int tray_label;    /* device percentage next to the tray icon */
+    int tray_label;    /* show text next to the tray icon at all */
+    int tray_name;     /* include the device name in that text */
     int tray_cycle_ms; /* rotate the tray through devices, 0 = off */
     int compact;       /* compact window by default */
 } Config;
@@ -79,6 +80,11 @@ int power_scan_ex(int push_history);
  * name a device and describe its state the same way */
 const char *power_status_text(const Dev *dv);
 void        power_display_name(const Dev *dv, char *out, unsigned long n);
+
+/* display name clipped to 15 characters for the tray, where space is
+ * scarce. Cuts on a character boundary: device names come from the
+ * hardware and are not guaranteed to be ASCII. */
+void        power_short_name(const Dev *dv, char *out, unsigned long n);
 
 /* the batteries the tray rotates through: everything reporting a
  * charge level, mains adapters excluded (they have no percentage) */
