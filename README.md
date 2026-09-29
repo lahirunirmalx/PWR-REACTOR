@@ -93,7 +93,9 @@ does not expose, so use the .deb if you depend on those.
 | `Ctrl+Q`       | quit                |
 
 Closing the window hides it to the tray when a tray icon is available,
-otherwise it quits.
+otherwise it quits. Only one instance ever runs: launching Power Reactor
+again brings the existing window back, which is how you reach it after
+`--hidden` on a desktop with no tray support.
 
 CLI flags: `--hidden` (start in the tray), `--compact` (smaller window),
 `--dark` (force the dark theme).
@@ -132,6 +134,21 @@ up automatically:
 
 Devices that expose no charge data are listed with a dash and a
 `No telemetry` state.
+
+## Compatibility
+
+The build pins `GLIB_VERSION_MAX_ALLOWED` to 2.64 and
+`GDK_VERSION_MAX_ALLOWED` to 3.24, the versions Ubuntu 20.04 ships, so
+using a newer API warns at compile time on any machine rather than
+failing on someone's older one. CI additionally compiles inside an
+`ubuntu:20.04` container on every push.
+
+| Release        | GTK    | Status                      |
+|----------------|--------|-----------------------------|
+| 20.04 LTS      | 3.24.20| verified in CI container    |
+| 22.04 LTS      | 3.24.33| same GTK 3 API              |
+| 24.04 LTS      | 3.24.41| verified on a dev machine   |
+| 26.04 LTS      | 3.24.x | same GTK 3 API              |
 
 ## Layout
 
