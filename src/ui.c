@@ -893,7 +893,13 @@ static void on_activate(GtkApplication *app, gpointer data)
      * wanted: show_all() followed by hide() paints one frame, which
      * flashes on every login when the service starts us hidden. The
      * window stays registered with the application either way, so the
-     * process lives on in the tray. */
+     * process lives on in the tray.
+     *
+     * Both children need showing by hand. The header bar is the
+     * window's titlebar, not part of the stack, so showing only the
+     * stack leaves the window with no title, no menu and no close
+     * button. */
+    gtk_widget_show_all(ui->header);
     gtk_widget_show_all(ui->stack);
     /* safe to honour even without a tray: the application is unique, so
      * launching it again presents this window */
