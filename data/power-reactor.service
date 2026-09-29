@@ -1,6 +1,14 @@
 [Unit]
 Description=Power Reactor battery telemetry dashboard
 PartOf=graphical-session.target
+# Start after the session is up: the app needs the session bus for its
+# tray icon and notifications.
+After=graphical-session.target
+# Give up rather than spin: without a limit, a missing binary or an
+# unusable session restarts every few seconds for the whole login and
+# fills the journal.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
