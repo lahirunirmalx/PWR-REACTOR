@@ -93,7 +93,9 @@ uninstall-service:
 deb:
 	rm -rf build/pkg $(BIN)
 	$(MAKE) $(BIN) ICON_DIR=
-	$(MAKE) install DESTDIR=build/pkg PREFIX=/usr
+	# ICON_DIR must be empty here too: this sub-make can decide to
+	# rebuild $(BIN), and the default would bake the build path back in
+	$(MAKE) install DESTDIR=build/pkg PREFIX=/usr ICON_DIR=
 	# caches belong to the installing system, not inside the package
 	rm -f build/pkg/usr/share/applications/mimeinfo.cache
 	rm -f build/pkg/usr/share/icons/hicolor/icon-theme.cache
