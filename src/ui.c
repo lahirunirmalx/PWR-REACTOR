@@ -127,6 +127,7 @@ typedef struct {
     Row        rows[MAX_DEVS];
     int        nrows;
     guint      tick_id;
+    guint      cycle_id;
     gboolean   tray_ok;
 } Ui;
 
@@ -154,38 +155,6 @@ static void fmt_duration(int minutes, char *out, size_t n)
         snprintf(out, n, "%d h", minutes / 60);
     else
         snprintf(out, n, "%d h %d min", minutes / 60, minutes % 60);
-}
-
-static const char *status_text(const Dev *dv)
-{
-    if (!strcmp(dv->status, "CHG"))
-        return "Charging";
-    if (!strcmp(dv->status, "DIS"))
-        return "Discharging";
-    if (!strcmp(dv->status, "FUL"))
-        return "Fully charged";
-    if (!strcmp(dv->status, "IDL"))
-        return "Not charging";
-    /* mains adapters carry no charge state, only a link flag */
-    if (dv->kind == KIND_MAINS)
-        return dv->online > 0 ? "Connected" : "Not connected";
-    return dv->capacity < 0 ? "No telemetry" : "Unknown";
-}
-
-/* kernel and upower names are identifiers; soften them for display
- * without touching what the data layer stores */
-static void display_name(const Dev *dv, char *out, size_t n)
-{
-    size_t i;
-
-    if (dv->kind == KIND_MAINS && !strncmp(dv->label, "line_power", 10)) {
-        snprintf(out, n, "AC adapter");
-        return;
-    }
-    snprintf(out, n, "%.27s", dv->label);
-    for (i = 0; out[i]; i++)
-        if (out[i] == '_')
-            out[i] = ' ';
 }
 
 static int str_has(const char *hay, const char *needle)
@@ -390,10 +359,10 @@ static void row_bind(Row *r, const Dev *dv)
         set_icon(r->icon, icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
         snprintf(r->iconname, sizeof r->iconname, "%s", icon);
     }
-    display_name(dv, name, sizeof name);
+    power_display_name(dv, name, sizeof name);
     gtk_label_set_text(GTK_LABEL(r->name), name);
 
-    n += snprintf(sub + n, sizeof sub - n, "%s", status_text(dv));
+    n += snprintf(sub + n, sizeof sub - n, "%s", power_status_text(dv));
     if (n >= (int)sizeof sub)
         n = (int)sizeof sub - 1;
     if (dv->voltage_uv > 0)
@@ -487,14 +456,14 @@ static void hero_update(Ui *ui)
     if (lead) {
         device_icon_name(lead, icon, sizeof icon);
         set_icon(ui->hero_icon, icon, GTK_ICON_SIZE_DIALOG);
-        display_name(lead, name, sizeof name);
+        power_display_name(lead, name, sizeof name);
         if (lead->est_min > 0) {
             fmt_duration(lead->est_min, est, sizeof est);
             snprintf(buf, sizeof buf, "%s  -  %s %s", name, est,
                      lead->est_ttf ? "until full" : "remaining");
         } else {
             snprintf(buf, sizeof buf, "%s  -  %s", name,
-                     status_text(lead));
+                     power_status_text(lead));
         }
     } else {
         set_icon(ui->hero_icon, charging ? "ac-adapter-symbolic"
@@ -536,6 +505,16 @@ static void dashboard_refresh(Ui *ui)
 static void window_present(Ui *ui)
 {
     gtk_window_present(GTK_WINDOW(ui->window));
+}
+
+/* rotate the tray label to the next battery */
+static gboolean on_cycle(gpointer data)
+{
+    Ui *ui = data;
+
+    if (ui->tray_ok && tray_cycle_next())
+        tray_update();
+    return G_SOURCE_CONTINUE;
 }
 
 static gboolean on_tick(gpointer data)
@@ -647,6 +626,10 @@ static void act_quit(GSimpleAction *a, GVariant *p, gpointer data)
     if (ui->tick_id) {
         g_source_remove(ui->tick_id);
         ui->tick_id = 0;
+    }
+    if (ui->cycle_id) {
+        g_source_remove(ui->cycle_id);
+        ui->cycle_id = 0;
     }
     g_application_quit(G_APPLICATION(ui->app));
 }
@@ -951,6 +934,8 @@ static void on_startup(GtkApplication *app, gpointer data)
     power_scan();
     tray_update();
     ui->tick_id = g_timeout_add(g_cfg.scan_ms, on_tick, ui);
+    if (ui->tray_ok && g_cfg.tray_cycle_ms > 0)
+        ui->cycle_id = g_timeout_add(g_cfg.tray_cycle_ms, on_cycle, ui);
 }
 
 int ui_run(int argc, char **argv)

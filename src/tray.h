@@ -18,7 +18,12 @@ typedef struct {
 /* returns 1 when a tray icon was created */
 int  tray_init(const TrayCallbacks *cb);
 
-/* refresh icon, label and tooltip from the current model */
+/* refresh icon, label and hover text from the current model */
 void tray_update(void);
+
+/* Advance the label to the next battery. Returns 1 when the selection
+ * actually moved, so the caller can skip a redundant refresh with only
+ * one battery present. */
+int tray_cycle_next(void);
 
 #endif /* TRAY_H */

@@ -113,6 +113,12 @@ deb:
 	dpkg-deb --build --root-owner-group build/pkg \
 	  build/power-reactor_$(VERSION)_$$(dpkg --print-architecture).deb
 
+# unit tests for the model: no GTK, no real hardware
+test: tests/test_power.c src/power.c src/power.h
+	$(CC) -O0 -g -Wall -Wextra -std=gnu99 -fsanitize=address,undefined \
+	  -o build/test_power tests/test_power.c src/power.c -lm
+	./build/test_power
+
 snap:
 	snapcraft
 
@@ -120,5 +126,5 @@ clean:
 	rm -f $(BIN) $(BIN)-asan
 	rm -rf build
 
-.PHONY: all run asan install uninstall install-service uninstall-service \
-        deb snap clean
+.PHONY: all run asan test install uninstall install-service \
+        uninstall-service deb snap clean

@@ -22,15 +22,16 @@ typedef struct {
     int popup_on_plug;
     int notify;
     int sound;
-    int dark;        /* 0 follow desktop, 1 force dark */
-    int tray_label;  /* lowest device percentage next to the tray icon */
-    int compact;     /* compact window by default */
+    int dark;          /* 0 follow desktop, 1 force dark */
+    int tray_label;    /* device percentage next to the tray icon */
+    int tray_cycle_ms; /* rotate the tray through devices, 0 = off */
+    int compact;       /* compact window by default */
 } Config;
 
 typedef struct {
     char label[28];
     char tag[12];
-    char status[8];  /* CHG, DIS, FULL, IDLE, ONLINE, OFF, -- */
+    char status[8];  /* CHG, DIS, FUL, IDL, or --- if unknown */
     int  kind;
     int  capacity;   /* percent, -1 = no telemetry */
     int  online;
@@ -74,6 +75,16 @@ int power_scan_ex(int push_history);
 #define power_scan() power_scan_ex(1)
 
 /* derived values for the dashboard */
+/* presentation helpers, shared by the dashboard and the tray so both
+ * name a device and describe its state the same way */
+const char *power_status_text(const Dev *dv);
+void        power_display_name(const Dev *dv, char *out, unsigned long n);
+
+/* the batteries the tray rotates through: everything reporting a
+ * charge level, mains adapters excluded (they have no percentage) */
+int power_battery_count(void);
+int power_battery_at(int n); /* index into g_devs, -1 out of range */
+
 float power_total_load_w(void);
 int   power_worst_pct(void);   /* lowest device percent, -1 none */
 int   power_any_charging(void);

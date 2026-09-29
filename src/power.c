@@ -28,7 +28,7 @@
 /* first run. key=value lines, # comments.                             */
 /* ------------------------------------------------------------------ */
 
-Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 0};
+Config g_cfg = {2000, 15, 5, 1, 1, 1, 0, 1, 4000, 0};
 
 /* step over leading blanks without ever passing the terminator */
 static const char *skip_spaces(const char *s)
@@ -91,8 +91,10 @@ static void config_write_default(const char *path)
         "sound=1\n"
         "# force the dark theme (0 = follow the desktop setting)\n"
         "dark=0\n"
-        "# show lowest device percentage next to the tray icon\n"
+        "# show the device percentage next to the tray icon\n"
         "tray_label=1\n"
+        "# rotate the tray through each battery, milliseconds (0 = off)\n"
+        "tray_cycle_ms=4000\n"
         "# start in the compact window size\n"
         "compact=0\n");
     fclose(f);
@@ -138,6 +140,9 @@ void power_config_load(void)
             g_cfg.dark = (int)parse_long(val, 0, 1, 0);
         else if (!strcmp(key, "tray_label"))
             g_cfg.tray_label = (int)parse_long(val, 0, 1, 1);
+        else if (!strcmp(key, "tray_cycle_ms"))
+            g_cfg.tray_cycle_ms =
+                (int)parse_long(val, 0, 600000, 4000);
         else if (!strcmp(key, "compact"))
             g_cfg.compact = (int)parse_long(val, 0, 1, 0);
     }
@@ -1050,8 +1055,65 @@ int power_scan_ex(int push_history)
 
 
 /* ------------------------------------------------------------------ */
+/* presentation helpers                                                */
+/* ------------------------------------------------------------------ */
+
+const char *power_status_text(const Dev *dv)
+{
+    if (!strcmp(dv->status, "CHG"))
+        return "Charging";
+    if (!strcmp(dv->status, "DIS"))
+        return "Discharging";
+    if (!strcmp(dv->status, "FUL"))
+        return "Fully charged";
+    if (!strcmp(dv->status, "IDL"))
+        return "Not charging";
+    /* mains adapters carry no charge state, only a link flag */
+    if (dv->kind == KIND_MAINS)
+        return dv->online > 0 ? "Connected" : "Not connected";
+    return dv->capacity < 0 ? "No telemetry" : "Unknown";
+}
+
+/* kernel and upower names are identifiers; soften them for display
+ * without changing what the model stores */
+void power_display_name(const Dev *dv, char *out, unsigned long n)
+{
+    unsigned long i;
+
+    if (dv->kind == KIND_MAINS && !strncmp(dv->label, "line_power", 10)) {
+        snprintf(out, n, "AC adapter");
+        return;
+    }
+    snprintf(out, n, "%.27s", dv->label);
+    for (i = 0; out[i]; i++)
+        if (out[i] == '_')
+            out[i] = ' ';
+}
+
+/* ------------------------------------------------------------------ */
 /* derived values for the dashboard                                    */
 /* ------------------------------------------------------------------ */
+
+int power_battery_count(void)
+{
+    int i, n = 0;
+    for (i = 0; i < g_ndevs; i++)
+        if (g_devs[i].kind != KIND_MAINS && g_devs[i].capacity >= 0)
+            n++;
+    return n;
+}
+
+int power_battery_at(int n)
+{
+    int i;
+    if (n < 0)
+        return -1;
+    for (i = 0; i < g_ndevs; i++)
+        if (g_devs[i].kind != KIND_MAINS && g_devs[i].capacity >= 0)
+            if (n-- == 0)
+                return i;
+    return -1;
+}
 
 /* most recent total bus load, in watts */
 float power_total_load_w(void)

@@ -33,9 +33,13 @@ notification before anything dies.
   at configurable warning and critical thresholds, with optional sound.
 - **Time estimates**: time to empty and time to full from upower when
   available, otherwise computed from the observed charge slope.
-- **Tray resident**: closing the window hides it to the tray; the icon
-  turns amber then red as the worst battery drops, and shows the lowest
-  percentage as its label.
+- **Tray resident**: closing the window hides it to the tray. The icon
+  turns amber then red as the worst battery drops. The label shows a
+  battery percentage, and **hovering names the device** it belongs to,
+  with its charge state. With more than one battery connected the label
+  **rotates through them automatically** every few seconds, so a phone
+  charging on your desk gets its turn in the top bar without opening
+  anything.
 - **Pops up on plug-in**: a newly connected device battery raises the
   window.
 - **Follows the desktop**: Yaru light and dark, your accent colour, and
@@ -112,7 +116,8 @@ popup_on_plug=1     # raise the window when a device battery appears
 notify=1            # desktop notifications
 sound=1             # alert sound
 dark=0              # force the dark theme, 0 = follow the desktop
-tray_label=1        # lowest device percentage next to the tray icon
+tray_label=1        # device percentage next to the tray icon
+tray_cycle_ms=4000  # rotate the tray through each battery (0 = off)
 compact=0           # start in the compact window size
 ```
 

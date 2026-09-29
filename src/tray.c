@@ -25,6 +25,7 @@ static void  *g_indicator;
 static int    g_tray_icon_state = -1; /* 0 green, 1 amber, 2 red */
 static int    g_tray_has_path;
 static TrayCallbacks g_cb;
+static int    g_cycle;          /* which battery the label shows */
 
 static ai_set_title_fn     g_ai_set_title;
 static ai_set_icon_full_fn g_ai_set_icon;
@@ -146,20 +147,33 @@ int tray_init(const TrayCallbacks *cb)
     return 1;
 }
 
+int tray_cycle_next(void)
+{
+    int n;
+
+    if (!g_tray_ok)
+        return 0;
+    n = power_battery_count();
+    if (n < 2)
+        return 0;
+    g_cycle = (g_cycle + 1) % n;
+    return 1;
+}
+
 void tray_update(void)
 {
-    char buf[64];
-    int i, low = -1, state = 0;
+    char label[32], title[128], name[32];
+    int i, nbats, at, state = 0;
 
     if (!g_tray_ok)
         return;
 
+    /* icon colour follows the device in the worst shape, not the one
+     * the label happens to be showing */
     for (i = 0; i < g_ndevs; i++) {
         const Dev *dv = &g_devs[i];
         if (dv->kind == KIND_MAINS || dv->capacity < 0)
             continue;
-        if (dv->kind == KIND_DEVBAT && (low < 0 || dv->capacity < low))
-            low = dv->capacity;
         if (dv->capacity <= g_cfg.crit_pct)
             state = 2;
         else if (state < 1 && (dv->capacity <= g_cfg.warn_pct ||
@@ -174,16 +188,33 @@ void tray_update(void)
         g_ai_set_icon(g_indicator, names[state], "Power Reactor");
         g_tray_icon_state = state;
     }
-    if (g_ai_set_label && g_cfg.tray_label) {
-        if (low >= 0)
-            snprintf(buf, sizeof buf, "%d%%", low);
+
+    nbats = power_battery_count();
+    if (g_cycle >= nbats)
+        g_cycle = 0; /* devices came or went since the last rotation */
+
+    label[0] = 0;
+    at = power_battery_at(g_cycle);
+    if (at >= 0) {
+        const Dev *cur = &g_devs[at];
+        power_display_name(cur, name, sizeof name);
+        snprintf(label, sizeof label, "%d%%", cur->capacity);
+        /* the hover text names the device the label belongs to, which
+         * is the only way to tell them apart while it rotates */
+        if (nbats > 1)
+            snprintf(title, sizeof title, "%s - %d%% - %s  (%d of %d)",
+                     name, cur->capacity, power_status_text(cur),
+                     g_cycle + 1, nbats);
         else
-            buf[0] = 0;
-        g_ai_set_label(g_indicator, buf, "100%");
-    }
-    if (g_ai_set_title) {
-        snprintf(buf, sizeof buf, "Power Reactor - %d source%s",
+            snprintf(title, sizeof title, "%s - %d%% - %s", name,
+                     cur->capacity, power_status_text(cur));
+    } else {
+        snprintf(title, sizeof title, "Power Reactor - %d source%s",
                  g_ndevs, g_ndevs == 1 ? "" : "s");
-        g_ai_set_title(g_indicator, buf);
     }
+
+    if (g_ai_set_label)
+        g_ai_set_label(g_indicator, g_cfg.tray_label ? label : "", "100%");
+    if (g_ai_set_title)
+        g_ai_set_title(g_indicator, title);
 }
