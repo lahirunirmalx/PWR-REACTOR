@@ -22,9 +22,15 @@ endif
 # the tray resolves icons from the hicolor theme instead.
 ICON_DIR ?= $(CURDIR)/icons
 
+# Pin the API floor to Ubuntu 20.04 (GLib 2.64, GTK 3.24) so using
+# anything newer warns here, not on a user's older machine.
 CFLAGS  += -O2 -Wall -Wextra -std=gnu99 \
            -DAPP_VERSION='"$(VERSION)"' \
            -DICON_DIR='"$(ICON_DIR)"' \
+           -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_64 \
+           -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_64 \
+           -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_3_24 \
+           -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_3_24 \
            $(GTK_CFLAGS)
 LDLIBS  += $(GTK_LIBS) -ldl -lm
 

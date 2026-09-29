@@ -578,7 +578,7 @@ static void play_alert_sound(int critical)
 }
 
 static void on_power_notify(const char *title, const char *body,
-                            int critical, void *user)
+                            const char *label, int critical, void *user)
 {
     Ui *ui = user;
     GNotification *n = g_notification_new(title);
@@ -596,7 +596,7 @@ static void on_power_notify(const char *title, const char *body,
         /* one id per device, so a low phone does not replace a low
          * laptop in the notification tray */
         char *id = g_strdup_printf("battery-%s-%s",
-                                   critical ? "crit" : "low", title);
+                                   critical ? "crit" : "low", label);
         g_application_send_notification(G_APPLICATION(ui->app), id, n);
         g_free(id);
     }
@@ -912,9 +912,9 @@ static void on_activate(GtkApplication *app, gpointer data)
      * window stays registered with the application either way, so the
      * process lives on in the tray. */
     gtk_widget_show_all(ui->stack);
-    /* without a tray icon there is no way back to a hidden window, so
-     * --hidden is ignored rather than stranding the app off screen */
-    if (!g_start_hidden || !ui->tray_ok)
+    /* safe to honour even without a tray: the application is unique, so
+     * launching it again presents this window */
+    if (!g_start_hidden)
         gtk_widget_show(ui->window);
     g_start_hidden = 0;
     dashboard_refresh(ui);
@@ -957,7 +957,10 @@ int ui_run(int argc, char **argv)
 {
     int status;
 
-    g_ui.app = gtk_application_new(APP_ID, G_APPLICATION_NON_UNIQUE);
+    /* unique on purpose: with --hidden the window may be the only way
+     * back, and clicking the launcher must present the running instance
+     * rather than start a second scan loop */
+    g_ui.app = gtk_application_new(APP_ID, G_APPLICATION_FLAGS_NONE);
     g_signal_connect(g_ui.app, "startup", G_CALLBACK(on_startup), &g_ui);
     g_signal_connect(g_ui.app, "activate", G_CALLBACK(on_activate),
                      &g_ui);

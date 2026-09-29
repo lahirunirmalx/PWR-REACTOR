@@ -896,14 +896,14 @@ void power_set_notifier(PowerNotifyFn fn, void *user)
 }
 
 static void send_notification(const char *title, const char *body,
-                              int critical)
+                              const char *label, int critical)
 {
     char t[64], b[96];
     if (!g_notify_fn)
         return;
     snprintf(t, sizeof t, "%.60s", title);
     snprintf(b, sizeof b, "%.90s", body);
-    g_notify_fn(t, b, critical, g_notify_user);
+    g_notify_fn(t, b, label, critical, g_notify_user);
 }
 
 static void alert_check(void)
@@ -955,7 +955,8 @@ static void alert_check(void)
             snprintf(body, sizeof body, want == AL_CRIT
                      ? "Critical battery level. Recharge now."
                      : "Battery is running low. Recharge soon.");
-            send_notification(title, body, want == AL_CRIT);
+            send_notification(title, body, dv->label,
+                              want == AL_CRIT);
             al->state = want;
         }
     }

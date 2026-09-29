@@ -60,7 +60,8 @@ extern int    g_upower_link;      /* 1 = upower answered, 0 = sysfs only */
 /* alert sink, installed by the UI so notifications can go through the
  * toolkit (GNotification) instead of shelling out */
 typedef void (*PowerNotifyFn)(const char *title, const char *body,
-                              int critical, void *user);
+                              const char *label, int critical,
+                              void *user);
 void power_set_notifier(PowerNotifyFn fn, void *user);
 
 void power_config_load(void);
