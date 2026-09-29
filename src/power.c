@@ -992,7 +992,7 @@ static void estimate_from_history(Dev *dv)
 }
 
 /* returns 1 when a new device battery appeared since the last scan */
-int power_scan(void)
+int power_scan_ex(int push_history)
 {
     static char prev[MAX_DEVS][28];
     static int nprev = -1;
@@ -1028,10 +1028,12 @@ int power_scan(void)
                      g_devs[i].label);
 
     /* history samples */
-    for (i = 0; i < g_nhist; i++)
-        g_hist[i].active = 0;
+    if (push_history)
+        for (i = 0; i < g_nhist; i++)
+            g_hist[i].active = 0;
     for (i = 0; i < g_ndevs; i++) {
-        if (g_devs[i].kind != KIND_MAINS && g_devs[i].capacity >= 0)
+        if (push_history && g_devs[i].kind != KIND_MAINS &&
+            g_devs[i].capacity >= 0)
             hist_push(g_devs[i].label, g_devs[i].capacity);
         if (g_devs[i].power_uw > 0)
             total_w += (float)(g_devs[i].power_uw / 1e6);

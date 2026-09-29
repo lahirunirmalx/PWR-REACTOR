@@ -66,8 +66,11 @@ void power_set_notifier(PowerNotifyFn fn, void *user);
 void power_config_load(void);
 void power_config_path(char *out, unsigned long n);
 
-/* rescan every source; returns 1 when a device battery just appeared */
-int power_scan(void);
+/* rescan every source; returns 1 when a device battery just appeared.
+ * push_history must be 0 for off-cadence scans (a manual refresh): the
+ * slope estimate assumes one sample per scan_ms. */
+int power_scan_ex(int push_history);
+#define power_scan() power_scan_ex(1)
 
 /* derived values for the dashboard */
 float power_total_load_w(void);

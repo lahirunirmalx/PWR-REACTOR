@@ -612,8 +612,9 @@ static void act_refresh(GSimpleAction *a, GVariant *p, gpointer data)
 {
     (void)a;
     (void)p;
-    /* redraw from the model the timer maintains: scanning here would
-     * push an off-cadence history sample and skew the slope estimate */
+    /* a real rescan, but without a history sample: this scan is off the
+     * timer cadence the slope estimate assumes */
+    power_scan_ex(0);
     tray_update();
     dashboard_refresh(data);
 }
