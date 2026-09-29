@@ -1,4 +1,8 @@
-power_reactor
-power_reactor_asan
-*.o
+power-reactor
+power-reactor-asan
 build/
+parts/
+prime/
+stage/
+*.snap
+*.o

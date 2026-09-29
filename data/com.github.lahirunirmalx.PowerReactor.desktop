@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Power Reactor
+GenericName=Battery Dashboard
+Comment=Battery and power telemetry for every connected device
+Exec=@BIN@
+Icon=power-reactor
+Terminal=false
+Categories=System;Monitor;GTK;
+Keywords=battery;power;charge;ups;monitor;telemetry;
+StartupNotify=true
+StartupWMClass=power-reactor
+X-GNOME-UsesNotifications=true

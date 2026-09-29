@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
     tags: ['v*']
   pull_request:
 
@@ -10,7 +10,43 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # The oldest release the project claims to support. GitHub retired the
+  # ubuntu-20.04 runner, so the claim is verified inside a container.
+  build-focal:
+    name: build on Ubuntu 20.04
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-3-dev desktop-file-utils
+
+      - name: Build
+        run: make
+
+      - name: Validate desktop entry
+        run: |
+          sed 's|@BIN@|/usr/bin/power-reactor|' \
+            data/com.github.lahirunirmalx.PowerReactor.desktop > /tmp/pr.desktop
+          desktop-file-validate /tmp/pr.desktop
+
+      - name: Package deb
+        run: make deb
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: power-reactor-deb-focal
+          path: build/*.deb
+
+  build-current:
+    name: build on ubuntu-latest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +54,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev libgtk-3-dev
+          sudo apt-get install -y libgtk-3-dev desktop-file-utils \
+            appstream-util
 
       - name: Build
         run: make
@@ -26,17 +63,33 @@ jobs:
       - name: Build (sanitizers)
         run: make asan
 
+      - name: Validate AppStream metadata
+        run: |
+          appstream-util validate-relax --nonet \
+            data/com.github.lahirunirmalx.PowerReactor.metainfo.xml
+
       - name: Package deb
         run: make deb
 
-      - name: Upload artifact
+      - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
           name: power-reactor-deb
           path: build/*.deb
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: [build-focal, build-current]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      # Only the 20.04 build is published: it links against the oldest
+      # glibc of any supported release, so it installs forward onto
+      # 22.04, 24.04 and 26.04. The newer build is a compile check.
+      - uses: actions/download-artifact@v4
         with:
-          files: build/*.deb
+          name: power-reactor-deb-focal
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb

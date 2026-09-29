@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.lahirunirmalx.PowerReactor</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>Power Reactor</name>
+  <summary>Battery telemetry for every connected device</summary>
+
+  <description>
+    <p>
+      Your desktop tells you when the laptop battery is low. It says
+      nothing when your wireless mouse is about to die mid-meeting, your
+      earbuds have five minutes left, or your phone never actually
+      started charging on that cable.
+    </p>
+    <p>
+      Power Reactor watches every battery the machine can see, estimates
+      the time remaining, and raises a desktop notification before
+      anything dies. It follows the desktop light and dark theme and
+      lives in the tray between glances.
+    </p>
+    <p>Sources it reads:</p>
+    <ul>
+      <li>upower: laptop battery, Bluetooth devices, wireless mice and keyboards, gamepads, iPhones over USB</li>
+      <li>The kernel directly, through /sys/class/power_supply</li>
+      <li>Android phones over USB with adb, or over Wi-Fi with KDE Connect and GSConnect</li>
+      <li>UPS units, through NUT or the USB HID power device class</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.github.lahirunirmalx.PowerReactor.desktop</launchable>
+
+  <url type="homepage">https://github.com/lahirunirmalx/PWR-REACTOR</url>
+  <url type="bugtracker">https://github.com/lahirunirmalx/PWR-REACTOR/issues</url>
+
+  <developer id="io.github.lahirunirmalx">
+    <name>lahiru</name>
+  </developer>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="1.0.0" date="2026-09-29">
+      <description>
+        <p>
+          A new GTK dashboard that follows the Ubuntu desktop theme, with
+          a summary card, per-device rows, a charge trend chart and
+          native desktop notifications.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>

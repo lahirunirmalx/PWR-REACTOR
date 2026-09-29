@@ -1,54 +1,75 @@
-VERSION := 0.9.0
-CC      ?= cc
-CFLAGS  += -O2 -Wall -Wextra -std=gnu99 $(shell pkg-config --cflags sdl2)
-LDLIBS  += $(shell pkg-config --libs sdl2) -lm
+# Power Reactor - GTK 3 battery telemetry dashboard
+#
+# GTK 3 is the floor and the ceiling on purpose: it is present on every
+# Ubuntu from 20.04 LTS to 26.04 LTS, so one source tree and one .deb
+# cover all of them.
 
+VERSION := 1.0.0
+APP_ID  := com.github.lahirunirmalx.PowerReactor
+
+CC      ?= cc
 PREFIX  ?= $(HOME)/.local
 
-# tray icon support (GTK3 + dlopen'd libayatana-appindicator)
-GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
-ifneq ($(GTK_CFLAGS),)
-CFLAGS += -DUSE_TRAY -DICON_DIR='"$(CURDIR)/icons"' $(GTK_CFLAGS)
-LDLIBS += $(shell pkg-config --libs gtk+-3.0) -ldl
+GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0)
+GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0)
+
+ifeq ($(strip $(GTK_CFLAGS)),)
+$(error GTK 3 development files not found - install libgtk-3-dev)
 endif
 
-power_reactor: main.c
-	$(CC) $(CFLAGS) -o $@ main.c $(LDLIBS)
+CFLAGS  += -O2 -Wall -Wextra -std=gnu99 \
+           -DAPP_VERSION='"$(VERSION)"' \
+           -DICON_DIR='"$(CURDIR)/icons"' \
+           $(GTK_CFLAGS)
+LDLIBS  += $(GTK_LIBS) -ldl -lm
 
-run: power_reactor
-	./power_reactor
+SRC := src/main.c src/power.c src/ui.c src/tray.c
+HDR := src/power.h src/ui.h src/tray.h
+BIN := power-reactor
+
+all: $(BIN)
+
+$(BIN): $(SRC) $(HDR)
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDLIBS)
+
+run: $(BIN)
+	./$(BIN)
 
 # address/UB sanitizer build for testing
-asan: main.c
-	$(CC) $(CFLAGS) -g -fsanitize=address,undefined -o power_reactor_asan \
-	  main.c $(LDLIBS)
+asan: $(SRC) $(HDR)
+	$(CC) $(CFLAGS) -g -fsanitize=address,undefined -o $(BIN)-asan \
+	  $(SRC) $(LDLIBS)
 
-install: power_reactor
-	install -Dm755 power_reactor $(PREFIX)/bin/power_reactor
+install: $(BIN)
+	install -Dm755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(BIN)
 	install -Dm644 icons/power-reactor.svg \
-	  $(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor.svg
+	  $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor.svg
 	install -Dm644 icons/power-reactor-amber.svg \
-	  $(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor-amber.svg
+	  $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor-amber.svg
 	install -Dm644 icons/power-reactor-red.svg \
-	  $(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor-red.svg
-	mkdir -p $(PREFIX)/share/applications
-	sed "s|@BIN@|$(PREFIX)/bin/power_reactor|" power-reactor.desktop \
-	  > $(PREFIX)/share/applications/power-reactor.desktop
-	-gtk-update-icon-cache -q $(PREFIX)/share/icons/hicolor 2>/dev/null
+	  $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor-red.svg
+	install -Dm644 data/$(APP_ID).metainfo.xml \
+	  $(DESTDIR)$(PREFIX)/share/metainfo/$(APP_ID).metainfo.xml
+	mkdir -p $(DESTDIR)$(PREFIX)/share/applications
+	sed "s|@BIN@|$(PREFIX)/bin/$(BIN)|" data/$(APP_ID).desktop \
+	  > $(DESTDIR)$(PREFIX)/share/applications/$(APP_ID).desktop
+	-gtk-update-icon-cache -q $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null
+	-update-desktop-database -q $(DESTDIR)$(PREFIX)/share/applications 2>/dev/null
 
 uninstall:
-	rm -f $(PREFIX)/bin/power_reactor
+	rm -f $(PREFIX)/bin/$(BIN)
 	rm -f $(PREFIX)/share/icons/hicolor/scalable/apps/power-reactor*.svg
-	rm -f $(PREFIX)/share/applications/power-reactor.desktop
+	rm -f $(PREFIX)/share/applications/$(APP_ID).desktop
+	rm -f $(PREFIX)/share/metainfo/$(APP_ID).metainfo.xml
 
-# service uses the installed binary when present, else the repo build
-BIN_PATH = $(shell [ -x $(PREFIX)/bin/power_reactor ] \
-	   && echo $(PREFIX)/bin/power_reactor \
-	   || echo $(CURDIR)/power_reactor)
+# the service prefers the installed binary, falling back to this tree
+BIN_PATH = $(shell [ -x $(PREFIX)/bin/$(BIN) ] \
+	   && echo $(PREFIX)/bin/$(BIN) \
+	   || echo $(CURDIR)/$(BIN))
 
-install-service: power_reactor
+install-service: $(BIN)
 	mkdir -p $(HOME)/.config/systemd/user
-	sed "s|@BIN@|$(BIN_PATH)|" power-reactor.service \
+	sed "s|@BIN@|$(BIN_PATH)|" data/power-reactor.service \
 	  > $(HOME)/.config/systemd/user/power-reactor.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now power-reactor.service
@@ -58,30 +79,32 @@ uninstall-service:
 	rm -f $(HOME)/.config/systemd/user/power-reactor.service
 	systemctl --user daemon-reload
 
-deb: power_reactor
+deb: $(BIN)
 	rm -rf build/pkg
-	install -Dm755 power_reactor build/pkg/usr/bin/power_reactor
-	install -Dm644 icons/power-reactor.svg \
-	  build/pkg/usr/share/icons/hicolor/scalable/apps/power-reactor.svg
-	install -Dm644 icons/power-reactor-amber.svg \
-	  build/pkg/usr/share/icons/hicolor/scalable/apps/power-reactor-amber.svg
-	install -Dm644 icons/power-reactor-red.svg \
-	  build/pkg/usr/share/icons/hicolor/scalable/apps/power-reactor-red.svg
-	mkdir -p build/pkg/usr/share/applications
-	sed "s|@BIN@|/usr/bin/power_reactor|" power-reactor.desktop \
-	  > build/pkg/usr/share/applications/power-reactor.desktop
+	$(MAKE) install DESTDIR=build/pkg PREFIX=/usr
+	# caches belong to the installing system, not inside the package
+	rm -f build/pkg/usr/share/applications/mimeinfo.cache
+	rm -f build/pkg/usr/share/icons/hicolor/icon-theme.cache
 	mkdir -p build/pkg/usr/lib/systemd/user
-	sed "s|@BIN@|/usr/bin/power_reactor|" power-reactor.service \
+	sed "s|@BIN@|/usr/bin/$(BIN)|" data/power-reactor.service \
 	  > build/pkg/usr/lib/systemd/user/power-reactor.service
 	install -Dm644 README.md build/pkg/usr/share/doc/power-reactor/README.md
 	mkdir -p build/pkg/DEBIAN
-	printf 'Package: power-reactor\nVersion: %s\nArchitecture: amd64\nMaintainer: lahiru <lahirunirmalx@gmail.com>\nDepends: libsdl2-2.0-0, libgtk-3-0, upower\nRecommends: libayatana-appindicator3-1, libnotify-bin\nSection: utils\nPriority: optional\nHomepage: https://github.com/lahirunirmalx/PWR-REACTOR\nDescription: Retro CRT/VFD battery telemetry panel\n Shows battery state of every connected device (laptop, phones,\n wireless peripherals, UPS) on a retro military CRT-style panel\n with tray icon, low battery alerts and charge trend scope.\n' \
-	  "$(VERSION)" > build/pkg/DEBIAN/control
+# Ubuntu 24.04 renamed these libraries for the 64-bit time_t transition
+# (libgtk-3-0 -> libgtk-3-0t64), so the dependency is an alternation and
+# the same control file resolves on 20.04 through 26.04. Build the deb on
+# the oldest release you support: glibc symbols only version forward.
+	printf 'Package: power-reactor\nVersion: %s\nArchitecture: %s\nMaintainer: lahiru <lahirunirmalx@gmail.com>\nDepends: libgtk-3-0 | libgtk-3-0t64, libglib2.0-0 | libglib2.0-0t64\nRecommends: upower, libayatana-appindicator3-1\nSuggests: android-tools-adb, nut-client, pulseaudio-utils\nSection: utils\nPriority: optional\nHomepage: https://github.com/lahirunirmalx/PWR-REACTOR\nDescription: Battery and power telemetry dashboard\n Shows the battery state of every connected device - laptop, phones,\n wireless peripherals and UPS units - on a clean GTK dashboard that\n follows the desktop theme, with low battery alerts, time estimates,\n a charge trend chart and a tray icon.\n' \
+	  "$(VERSION)" "$$(dpkg --print-architecture)" > build/pkg/DEBIAN/control
 	dpkg-deb --build --root-owner-group build/pkg \
-	  build/power-reactor_$(VERSION)_amd64.deb
+	  build/power-reactor_$(VERSION)_$$(dpkg --print-architecture).deb
+
+snap:
+	snapcraft
 
 clean:
-	rm -f power_reactor power_reactor_asan
+	rm -f $(BIN) $(BIN)-asan
 	rm -rf build
 
-.PHONY: run asan install uninstall install-service uninstall-service deb clean
+.PHONY: all run asan install uninstall install-service uninstall-service \
+        deb snap clean

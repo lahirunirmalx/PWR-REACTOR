@@ -1,0 +1,46 @@
+name: power-reactor
+base: core22
+version: '1.0.0'
+summary: Battery telemetry for every connected device
+description: |
+  Power Reactor watches every battery the machine can see - laptop,
+  phones, wireless mice and keyboards, earbuds, gamepads and UPS units -
+  estimates the time remaining, and raises a desktop notification before
+  anything dies. The dashboard follows the desktop light and dark theme.
+
+  Note on confinement: inside the snap sandbox the app reads batteries
+  through upower and the kernel. The adb, KDE Connect, GSConnect and NUT
+  sources need host commands that strict confinement does not expose, so
+  those sources are unavailable in the snap. Install the deb from the
+  project releases page if you need them.
+
+grade: stable
+confinement: strict
+
+apps:
+  power-reactor:
+    command: usr/bin/power-reactor
+    extensions: [gnome]
+    common-id: com.github.lahirunirmalx.PowerReactor
+    desktop: usr/share/applications/com.github.lahirunirmalx.PowerReactor.desktop
+    plugs:
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - unity7
+      - upower-observe
+      - hardware-observe
+      - audio-playback
+
+parts:
+  power-reactor:
+    plugin: make
+    source: .
+    make-parameters:
+      - PREFIX=/usr
+    build-packages:
+      - libgtk-3-dev
+      - pkg-config
+    stage-packages:
+      - libayatana-appindicator3-1
